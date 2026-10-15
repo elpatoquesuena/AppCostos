@@ -101,7 +101,26 @@ Future<void> editDialog(BuildContext context, String title, List<FormFieldSpec> 
   final key = GlobalKey<FormState>();
   await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
     title:Text(title),
-    content:SizedBox(width:400,child:SingleChildScrollView(child:Form(key:key,child:Column(mainAxisSize:MainAxisSize.min,children:fields.map((f)=>Padding(padding:const EdgeInsets.only(bottom:12),child:TextFormField(controller:controllers[f.key],keyboardType:f.numeric?const TextInputType.numberWithOptions(decimal:true):TextInputType.text,decoration:InputDecoration(labelText:f.label),validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':null:null)).toList())))),
+    content: SizedBox(
+      width: 400,
+      child: SingleChildScrollView(
+        child: Form(
+          key: key,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: fields.map((f) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: TextFormField(
+                controller: controllers[f.key],
+                keyboardType: f.numeric ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
+                decoration: InputDecoration(labelText: f.label),
+                validator: f.required ? (v) => (v == null || v.trim().isEmpty) ? 'Campo obligatorio' : null : null,
+              ),
+            )).toList(),
+          ),
+        ),
+      ),
+    ),
     actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),FilledButton(onPressed:()async{if(!key.currentState!.validate())return;final values={for(final e in controllers.entries)e.key:e.value.text.trim()};Navigator.pop(ctx);await onSave(values);},child:const Text('Guardar'))],
   ));
   for(final c in controllers.values){c.dispose();}
@@ -151,7 +170,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
       ...history.map((h)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(cash(h['price'] as num)),subtitle:Text(dateLabel(h['date'] as String)))),
       const Divider(),const Text('Recetas que lo usan',style:TextStyle(fontWeight:FontWeight.bold)),
       if(recipes.isEmpty)const Text('Ninguna por ahora.'),...recipes.map((r)=>Text('• '+(r['name'] as String))),
-    ]))),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cerrar'))]);
+    ]))), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar'))]));
   }
   Future<void> remove(Map<String,Object?> item) async {
     final used=await Store.instance.db.query('recipe_items',where:'ingredient_id=?',whereArgs:[item['id']],limit:1);
@@ -212,7 +231,17 @@ class _RecipesPageState extends State<RecipesPage> {
       DropdownButtonFormField<int>(value:chosen,decoration:const InputDecoration(labelText:'Insumo'),items:ingredients.map((x)=>DropdownMenuItem(value:x['id'] as int,child:Text(x['name'] as String,overflow:TextOverflow.ellipsis))).toList(),onChanged:(v){if(v!=null)setD(()=>chosen=v);}),
       const SizedBox(height:12),TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
       const SizedBox(height:12),DropdownButtonFormField<String>(value:unit,decoration:const InputDecoration(labelText:'Unidad'),items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v){if(v!=null)setD(()=>unit=v);}),
-    ]),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),FilledButton(onPressed:()async{final q=number(qty.text);if(q<=0)return;await Store.instance.db.insert('recipe_items',{'recipe_id':recipe['id'],'ingredient_id':chosen,'qty':q,'unit':unit});if(ctx.mounted)Navigator.pop(ctx);if(mounted)setState((){});widget.onChange();},child:const Text('Agregar')]))));
+    ]), actions: [
+      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+      FilledButton(onPressed: () async {
+        final q = number(qty.text);
+        if (q <= 0) return;
+        await Store.instance.db.insert('recipe_items', {'recipe_id': recipe['id'], 'ingredient_id': chosen, 'qty': q, 'unit': unit});
+        if (ctx.mounted) Navigator.pop(ctx);
+        if (mounted) setState(() {});
+        widget.onChange();
+      }, child: const Text('Agregar')),
+    ])));
     qty.dispose();
   }
   Future<void> editSale(Map<String,Object?> r) async {
@@ -236,7 +265,11 @@ class _RecipesPageState extends State<RecipesPage> {
       const Divider(),const Text('Ingredientes',style:TextStyle(fontWeight:FontWeight.bold)),
       if(items.isEmpty)const Text('Agregá ingredientes para calcular el costo.'),
       ...items.map((x)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(x['name'] as String),subtitle:Text(x['qty'].toString()+' '+(x['unit'] as String)+' · insumo: '+cash(x['price'] as num)))),
-    ]))),actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cerrar')),TextButton(onPressed:()async{Navigator.pop(ctx);await editSale(r);},child:const Text('Editar venta')),FilledButton(onPressed:()async{Navigator.pop(ctx);await addIngredient(r);},child:const Text('Agregar insumo'))]);
+    ]))), actions: [
+      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
+      TextButton(onPressed: () async { Navigator.pop(ctx); await editSale(r); }, child: const Text('Editar venta')),
+      FilledButton(onPressed: () async { Navigator.pop(ctx); await addIngredient(r); }, child: const Text('Agregar insumo')),
+    ]));
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Padding(padding:const EdgeInsets.all(16),child:Row(children:[const Expanded(child:Text('Tus recetas',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold))),FilledButton.icon(onPressed:add,icon:const Icon(Icons.add),label:const Text('Nueva'))])),
