@@ -158,6 +158,38 @@ class _IngredientsPageState extends State<IngredientsPage> {
       if(mounted)setState((){});widget.onChange();
     });
   }
+  Future<void> editIngredient(Map<String,Object?> item) async {
+    await editDialog(context,'Editar insumo',[
+      FormFieldSpec('name','Nombre',initial:item['name'] as String),
+      FormFieldSpec('description','Descripción',initial:item['description'] as String,required:false),
+      FormFieldSpec('qty','Cantidad de la presentación',initial:item['qty'].toString(),numeric:true),
+      FormFieldSpec('unit','Unidad (g, kg, ml, l, unidad)',initial:item['unit'] as String),
+      FormFieldSpec('price','Precio actual',initial:item['price'].toString(),numeric:true),
+    ],(v)async{
+      final now=stamp();
+      final price=number(v['price']);
+      final oldPrice=(item['price'] as num).toDouble();
+      final qty=number(v['qty']);
+      if(qty<=0){
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('La cantidad de la presentación debe ser mayor que cero.')));
+        return;
+      }
+      await Store.instance.db.update('ingredients',{
+        'name':v['name'],
+        'description':v['description']??'',
+        'qty':qty,
+        'unit':v['unit'],
+        'price':price,
+        'updated':now,
+      },where:'id=?',whereArgs:[item['id']]);
+      // Registrar un nuevo punto del historial solo cuando cambie el precio.
+      if(price!=oldPrice){
+        await Store.instance.db.insert('ingredient_prices',{'ingredient_id':item['id'],'price':price,'date':now});
+      }
+      if(mounted)setState((){});
+      widget.onChange();
+    });
+  }
   Future<void> priceUpdate(Map<String,Object?> item) async {
     await editDialog(context,'Actualizar precio',const [FormFieldSpec('price','Nuevo precio',numeric:true)],(v)async{
       final price=number(v['price']);final now=stamp();
@@ -193,7 +225,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
       if(!s.hasData)return const Center(child:CircularProgressIndicator());
       final list=s.data!.where((x)=>(x['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();
       if(list.isEmpty)return const Center(child:Text('No hay insumos. Tocá + para agregar uno.'));
-      return ListView.builder(itemCount:list.length,itemBuilder:(c,i){final x=list[i];return Card(child:ListTile(title:Text(x['name'] as String),subtitle:Text(x['qty'].toString()+' '+(x['unit'] as String)+' · '+dateLabel(x['updated'] as String)),leading:IconButton(onPressed:()=>priceUpdate(x),icon:const Icon(Icons.price_change_outlined)),trailing:Text(cash(x['price'] as num),style:const TextStyle(fontWeight:FontWeight.bold)),onTap:()=>detail(x),onLongPress:()=>remove(x)));});
+      return ListView.builder(itemCount:list.length,itemBuilder:(c,i){final x=list[i];return Card(child:ListTile(title:Text(x['name'] as String),subtitle:Text(x['qty'].toString()+' '+(x['unit'] as String)+' · '+dateLabel(x['updated'] as String)),leading:IconButton(onPressed:()=>priceUpdate(x),tooltip:'Actualizar precio',icon:const Icon(Icons.price_change_outlined)),trailing:Row(mainAxisSize:MainAxisSize.min,children:[Text(cash(x['price'] as num),style:const TextStyle(fontWeight:FontWeight.bold)),IconButton(onPressed:()=>editIngredient(x),tooltip:'Editar insumo',icon:const Icon(Icons.edit_outlined))]),onTap:()=>detail(x),onLongPress:()=>remove(x)));});
     })),
   ]);
 }
