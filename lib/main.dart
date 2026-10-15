@@ -232,15 +232,18 @@ class _RecipesPageState extends State<RecipesPage> {
     required String packUnit,
     required double price,
   }) {
-    if (packQty <= 0 || usedQty < 0) return 0;
+    if (packQty <= 0 || usedQty < 0 || price < 0) return 0;
     final used = unitInfo(usedUnit);
     final pack = unitInfo(packUnit);
     if (used.dimension != pack.dimension) {
       throw StateError('Unidades incompatibles: $usedUnit y $packUnit');
     }
+    // El precio guardado corresponde al envase completo. Convertimos ambas
+    // cantidades a la misma unidad base antes de calcular la proporción.
     final usedInBase = usedQty * used.factor;
     final packInBase = packQty * pack.factor;
-    return price * usedInBase / packInBase;
+    if (packInBase <= 0) return 0;
+    return (price / packInBase) * usedInBase;
   }
 
   Future<double> cost(Map<String,Object?> recipe) async {
@@ -364,6 +367,81 @@ class _RecipesPageState extends State<RecipesPage> {
     qty.dispose();
     search.dispose();
   }
+  Future<void> editIngredientItem(Map<String,Object?> recipe, Map<String,Object?> item) async {
+    final ingredients = await Store.instance.db.query('ingredients', orderBy:'name COLLATE NOCASE');
+    if (ingredients.isEmpty) return;
+    final current = ingredients.where((x) => x['id'] == item['ingredient_id']).toList();
+    Map<String,Object?>? chosen = current.isEmpty ? ingredients.first : current.first;
+    final qty = TextEditingController(text:item['qty'].toString());
+    String unit = item['unit'] as String;
+    final searchController = TextEditingController(text:chosen['name'] as String);
+    if (!mounted) return;
+    await showDialog<void>(
+      context:context,
+      builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
+        title:const Text('Editar ingrediente'),
+        content:SizedBox(width:400, child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+          Autocomplete<Map<String,Object?>>(
+            initialValue: TextEditingValue(text: chosen!['name'] as String),
+            displayStringForOption:(x)=>x['name'] as String,
+            optionsBuilder:(v) {
+              final q=v.text.trim().toLowerCase();
+              return ingredients.where((x)=>(x['name'] as String).toLowerCase().contains(q));
+            },
+            onSelected:(x)=>setD(()=>chosen=x),
+            fieldViewBuilder:(context,controller,focusNode,onSubmitted)=>TextField(
+              controller:controller, focusNode:focusNode,
+              decoration:const InputDecoration(labelText:'Buscar insumo',prefixIcon:Icon(Icons.search)),
+              onChanged:(v){ if(chosen != null && v != chosen!['name']) setD(()=>chosen=null); },
+            ),
+          ),
+          if(chosen!=null) Align(alignment:Alignment.centerLeft,child:Text('Presentación: ${chosen!['qty']} ${chosen!['unit']} · envase: ${cash(chosen!['price'] as num)}')),
+          const SizedBox(height:12),
+          TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
+          const SizedBox(height:12),
+          DropdownButtonFormField<String>(
+            value:['g','kg','ml','l','unidad'].contains(unit)?unit:'g',
+            decoration:const InputDecoration(labelText:'Unidad utilizada'),
+            items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
+            onChanged:(v){if(v!=null)setD(()=>unit=v);},
+          ),
+        ]))),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
+          TextButton(
+            style:TextButton.styleFrom(foregroundColor:Theme.of(context).colorScheme.error),
+            onPressed:()async{
+              await Store.instance.db.delete('recipe_items',where:'id=?',whereArgs:[item['id']]);
+              if(ctx.mounted)Navigator.pop(ctx);
+              if(mounted)setState((){});
+              widget.onChange();
+            },
+            child:const Text('Quitar ingrediente'),
+          ),
+          FilledButton(onPressed:()async{
+            final q=number(qty.text);
+            if(chosen==null || q<=0){
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Seleccioná un insumo e ingresá una cantidad mayor que cero.')));
+              return;
+            }
+            try {
+              ingredientCost(usedQty:q,usedUnit:unit,packQty:(chosen!['qty'] as num).toDouble(),packUnit:chosen!['unit'] as String,price:(chosen!['price'] as num).toDouble());
+            } on StateError {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('La unidad usada ($unit) no coincide con la presentación (${chosen!['unit']}).')));
+              return;
+            }
+            await Store.instance.db.update('recipe_items',{'ingredient_id':chosen!['id'],'qty':q,'unit':unit},where:'id=?',whereArgs:[item['id']]);
+            if(ctx.mounted)Navigator.pop(ctx);
+            if(mounted)setState((){});
+            widget.onChange();
+          },child:const Text('Guardar cambios')),
+        ],
+      )),
+    );
+    qty.dispose();
+    searchController.dispose();
+  }
+
   Future<void> editSale(Map<String,Object?> r) async {
     await editDialog(context,'Precio y presentación',[
       FormFieldSpec('qty','Cantidad de venta',initial:r['sale_qty'].toString(),numeric:true),
@@ -372,7 +450,7 @@ class _RecipesPageState extends State<RecipesPage> {
     ],(v)async{await Store.instance.db.update('recipes',{'sale_qty':number(v['qty']),'sale_unit':v['unit'],'sale_price':number(v['price']),'sale_updated':stamp()},where:'id=?',whereArgs:[r['id']]);if(mounted)setState((){});widget.onChange();});
   }
   Future<void> detail(Map<String,Object?> r) async {
-    final items=await Store.instance.db.rawQuery('SELECT ri.id,ri.qty,ri.unit,i.name,i.price FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',[r['id']]);
+    final items=await Store.instance.db.rawQuery('SELECT ri.id,ri.recipe_id,ri.ingredient_id,ri.qty,ri.unit,i.name,i.price,i.qty AS pack_qty,i.unit AS pack_unit FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',[r['id']]);
     final c=await cost(r);final sale=(r['sale_price'] as num).toDouble();final margin=sale>0?(sale-c)/sale*100:0;
     if(!mounted)return;
     await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:Text(r['name'] as String),content:SizedBox(width:400,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
@@ -384,7 +462,25 @@ class _RecipesPageState extends State<RecipesPage> {
       Text('Preparación: '+r['minutes'].toString()+' min'),
       const Divider(),const Text('Ingredientes',style:TextStyle(fontWeight:FontWeight.bold)),
       if(items.isEmpty)const Text('Agregá ingredientes para calcular el costo.'),
-      ...items.map((x)=>ListTile(contentPadding:EdgeInsets.zero,title:Text(x['name'] as String),subtitle:Text(x['qty'].toString()+' '+(x['unit'] as String)+' · insumo: '+cash(x['price'] as num)))),
+      ...items.map((x) {
+        double usedCost = 0;
+        try {
+          usedCost = ingredientCost(
+            usedQty:(x['qty'] as num).toDouble(),
+            usedUnit:x['unit'] as String,
+            packQty:(x['pack_qty'] as num).toDouble(),
+            packUnit:x['pack_unit'] as String,
+            price:(x['price'] as num).toDouble(),
+          );
+        } on StateError {}
+        return ListTile(
+          contentPadding:EdgeInsets.zero,
+          title:Text(x['name'] as String),
+          subtitle:Text('${x['qty']} ${x['unit']} usados · costo de esta cantidad: ${cash(usedCost)}\nEnvase: ${x['pack_qty']} ${x['pack_unit']} = ${cash(x['price'] as num)}'),
+          isThreeLine:true,
+          trailing:IconButton(icon:const Icon(Icons.edit_outlined),tooltip:'Editar ingrediente',onPressed:()async{Navigator.pop(ctx);await editIngredientItem(r,x);await detail(r);}),
+        );
+      }),
     ]))), actions: [
       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
       TextButton(onPressed: () async { Navigator.pop(ctx); await editSale(r); }, child: const Text('Editar venta')),
