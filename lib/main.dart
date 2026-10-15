@@ -60,7 +60,14 @@ class _MainPageState extends State<MainPage> {
       RecipesPage(key: ValueKey('recipes'+revision.toString()), onChange: refresh),
       SettingsPage(key: ValueKey('settings'+revision.toString())),
     ];
-    return Scaffold(
+    return PopScope(
+      canPop: index == 0,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && index != 0 && mounted) {
+          setState(() => index = 0);
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(title: const Text('AppCostos')),
       body: IndexedStack(index:index, children:pages),
       bottomNavigationBar: NavigationBar(selectedIndex:index,onDestinationSelected:(i)=>setState(()=>index=i),destinations:const [
@@ -69,6 +76,7 @@ class _MainPageState extends State<MainPage> {
         NavigationDestination(icon:Icon(Icons.menu_book_outlined),label:'Recetas'),
         NavigationDestination(icon:Icon(Icons.tune),label:'Parámetros'),
       ]),
+      ),
     );
   }
 }
@@ -197,16 +205,55 @@ class RecipesPage extends StatefulWidget {
 }
 class _RecipesPageState extends State<RecipesPage> {
   Future<List<Map<String,Object?>>> get data=>Store.instance.db.query('recipes',orderBy:'name COLLATE NOCASE');
+  // Normaliza unidades a una unidad base: g, ml o unidad.
+  // Así, por ejemplo, 100 ml de una presentación de 1 l equivalen al 10% del envase.
+  ({String dimension, double factor}) unitInfo(String raw) {
+    final u = raw.trim().toLowerCase().replaceAll(' ', '');
+    switch (u) {
+      case 'kg': case 'kilo': case 'kilos': case 'kilogramo': case 'kilogramos':
+        return (dimension: 'mass', factor: 1000);
+      case 'g': case 'gr': case 'gramo': case 'gramos':
+        return (dimension: 'mass', factor: 1);
+      case 'l': case 'lt': case 'lts': case 'litro': case 'litros':
+        return (dimension: 'volume', factor: 1000);
+      case 'ml': case 'mililitro': case 'mililitros':
+        return (dimension: 'volume', factor: 1);
+      case 'unidad': case 'unidades': case 'u': case 'unid':
+        return (dimension: 'count', factor: 1);
+      default:
+        return (dimension: 'other:' + u, factor: 1);
+    }
+  }
+
+  double ingredientCost({
+    required double usedQty,
+    required String usedUnit,
+    required double packQty,
+    required String packUnit,
+    required double price,
+  }) {
+    if (packQty <= 0 || usedQty < 0) return 0;
+    final used = unitInfo(usedUnit);
+    final pack = unitInfo(packUnit);
+    if (used.dimension != pack.dimension) {
+      throw StateError('Unidades incompatibles: $usedUnit y $packUnit');
+    }
+    final usedInBase = usedQty * used.factor;
+    final packInBase = packQty * pack.factor;
+    return price * usedInBase / packInBase;
+  }
+
   Future<double> cost(Map<String,Object?> recipe) async {
     final rows=await Store.instance.db.rawQuery('SELECT ri.qty,ri.unit,i.price,i.qty AS pack_qty,i.unit AS pack_unit FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',[recipe['id']]);
     double total=0;
     for(final x in rows){
-      final used=(x['qty'] as num).toDouble();final pack=(x['pack_qty'] as num).toDouble();final price=(x['price'] as num).toDouble();
-      final u=x['unit'] as String;final pu=x['pack_unit'] as String;
-      double normalized=used;
-      if(u=='kg'&&pu=='g'||u=='l'&&pu=='ml')normalized=used*1000;
-      if(u=='g'&&pu=='kg'||u=='ml'&&pu=='l')normalized=used/1000;
-      total+=price*normalized/pack;
+      total += ingredientCost(
+        usedQty: (x['qty'] as num).toDouble(),
+        usedUnit: x['unit'] as String,
+        packQty: (x['pack_qty'] as num).toDouble(),
+        packUnit: x['pack_unit'] as String,
+        price: (x['price'] as num).toDouble(),
+      );
     }
     final settings=await Store.instance.db.query('settings',where:'key=?',whereArgs:['hourly_rate'],limit:1);
     final rate=settings.isEmpty?0:number(settings.first['value'] as String);
@@ -225,24 +272,97 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> addIngredient(Map<String,Object?> recipe) async {
     final ingredients=await Store.instance.db.query('ingredients',orderBy:'name COLLATE NOCASE');
     if(ingredients.isEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Primero cargá un insumo.')));return;}
-    int chosen=ingredients.first['id'] as int;String unit='g';final qty=TextEditingController(text:'1');
+    Map<String,Object?>? chosen;
+    String unit='g';
+    final qty=TextEditingController(text:'1');
+    final search=TextEditingController();
     if(!mounted)return;
-    await showDialog<void>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(title:const Text('Agregar ingrediente'),content:Column(mainAxisSize:MainAxisSize.min,children:[
-      DropdownButtonFormField<int>(value:chosen,decoration:const InputDecoration(labelText:'Insumo'),items:ingredients.map((x)=>DropdownMenuItem(value:x['id'] as int,child:Text(x['name'] as String,overflow:TextOverflow.ellipsis))).toList(),onChanged:(v){if(v!=null)setD(()=>chosen=v);}),
-      const SizedBox(height:12),TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
-      const SizedBox(height:12),DropdownButtonFormField<String>(value:unit,decoration:const InputDecoration(labelText:'Unidad'),items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v){if(v!=null)setD(()=>unit=v);}),
-    ]), actions: [
-      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-      FilledButton(onPressed: () async {
-        final q = number(qty.text);
-        if (q <= 0) return;
-        await Store.instance.db.insert('recipe_items', {'recipe_id': recipe['id'], 'ingredient_id': chosen, 'qty': q, 'unit': unit});
-        if (ctx.mounted) Navigator.pop(ctx);
-        if (mounted) setState(() {});
-        widget.onChange();
-      }, child: const Text('Agregar')),
-    ])));
+    await showDialog<void>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
+      title:const Text('Agregar ingrediente'),
+      content:SizedBox(width:400,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Autocomplete<Map<String,Object?>>(
+          displayStringForOption:(x)=>x['name'] as String,
+          optionsBuilder:(value) {
+            final q=value.text.trim().toLowerCase();
+            return ingredients.where((x)=>(x['name'] as String).toLowerCase().contains(q));
+          },
+          fieldViewBuilder:(context,controller,focusNode,onFieldSubmitted) {
+            search.text=controller.text;
+            return TextField(
+              controller:controller,
+              focusNode:focusNode,
+              decoration:InputDecoration(
+                labelText:'Buscar insumo',
+                hintText:'Escribí el nombre',
+                prefixIcon:const Icon(Icons.search),
+                suffixIcon:controller.text.isEmpty?null:IconButton(
+                  icon:const Icon(Icons.clear),
+                  onPressed:(){controller.clear();setD(()=>chosen=null);},
+                ),
+              ),
+            );
+          },
+          onSelected:(option)=>setD(()=>chosen=option),
+          optionsViewBuilder:(context,onSelected,options)=>Align(
+            alignment:Alignment.topLeft,
+            child:Material(
+              elevation:4,
+              child:ConstrainedBox(
+                constraints:const BoxConstraints(maxHeight:220,maxWidth:360),
+                child:ListView(
+                  padding:EdgeInsets.zero,
+                  shrinkWrap:true,
+                  children:options.map((option)=>ListTile(
+                    title:Text(option['name'] as String),
+                    subtitle:Text('Presentación: ${option['qty']} ${option['unit']} · ${cash(option['price'] as num)}'),
+                    onTap:()=>onSelected(option),
+                  )).toList(),
+                ),
+              ),
+            ),
+          ),
+        ),
+        if(chosen!=null)Padding(
+          padding:const EdgeInsets.only(top:8),
+          child:Align(alignment:Alignment.centerLeft,child:Text('Seleccionado: ${chosen!['name']}')),
+        ),
+        const SizedBox(height:12),
+        TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
+        const SizedBox(height:12),
+        DropdownButtonFormField<String>(
+          value:unit,
+          decoration:const InputDecoration(labelText:'Unidad utilizada'),
+          items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
+          onChanged:(v){if(v!=null)setD(()=>unit=v);},
+        ),
+      ]))),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
+        FilledButton(onPressed:()async{
+          final q=number(qty.text);
+          if(chosen==null){
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Buscá y seleccioná un insumo.')));
+            return;
+          }
+          if(q<=0){
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ingresá una cantidad mayor que cero.')));
+            return;
+          }
+          try {
+            ingredientCost(usedQty:q,usedUnit:unit,packQty:(chosen!['qty'] as num).toDouble(),packUnit:chosen!['unit'] as String,price:(chosen!['price'] as num).toDouble());
+          } on StateError {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('La unidad elegida ($unit) no es compatible con la presentación del insumo (${chosen!['unit']}).')));
+            return;
+          }
+          await Store.instance.db.insert('recipe_items',{'recipe_id':recipe['id'],'ingredient_id':chosen!['id'],'qty':q,'unit':unit});
+          if(ctx.mounted)Navigator.pop(ctx);
+          if(mounted)setState((){});
+          widget.onChange();
+        },child:const Text('Agregar')),
+      ],
+    )));
     qty.dispose();
+    search.dispose();
   }
   Future<void> editSale(Map<String,Object?> r) async {
     await editDialog(context,'Precio y presentación',[
