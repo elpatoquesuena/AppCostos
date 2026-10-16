@@ -169,7 +169,7 @@ class _MainPageState extends State<MainPage> {
       Dashboard(key: ValueKey('home'+revision.toString()), go: (i) => setState(() => index=i)),
       IngredientsPage(onChange: refresh),
       RecipesPage(onChange: refresh),
-      const SettingsPage(),
+      SettingsPage(onDataChanged: refresh),
     ];
     return PopScope(
       canPop: index == 0,
@@ -1004,7 +1004,7 @@ class DataTransferService {
   }
 }
 
-class SettingsPage extends StatefulWidget { const SettingsPage({super.key}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
+class SettingsPage extends StatefulWidget { final VoidCallback onDataChanged; const SettingsPage({super.key,required this.onDataChanged}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
 class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
   Future<void> load() async {
@@ -1049,8 +1049,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (confirmed != true || !mounted) return;
       await DataTransferService.importWorkbook(data);
       await load();
+      widget.onDataChanged();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Datos importados correctamente. Reiniciá la aplicación para actualizar todas las pantallas.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Datos importados correctamente.')));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se pudo importar el Excel: $e')));
     }
