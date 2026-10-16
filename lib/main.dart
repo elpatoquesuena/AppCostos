@@ -1039,7 +1039,7 @@ class _SettingsPageState extends State<SettingsPage> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Reemplazar los datos actuales'),
-          content: Text('El archivo contiene \${data['ingredients']!.length} insumos y \${data['recipes']!.length} recetas. Se reemplazarán todos los datos actuales, incluidos los historiales y parámetros. Esta acción no se puede deshacer. ¿Querés continuar?'),
+          content: Text('El archivo contiene ${data['ingredients']!.length} insumos y ${data['recipes']!.length} recetas. Se reemplazarán todos los datos actuales, incluidos los historiales y parámetros. Esta acción no se puede deshacer. ¿Querés continuar?'),
           actions: [
             TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
             FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Importar y reemplazar')),
