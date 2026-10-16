@@ -29,16 +29,26 @@ class Store {
   }
 }
 
-String fmt(num n) { final s=n.toStringAsFixed(n % 1 == 0 ? 0 : 2); final p=s.split('.'); final w=p[0]; final b=StringBuffer(); for(var i=0;i<w.length;i++){if(i>0&&(w.length-i)%3==0)b.write('.');b.write(w[i]);} return p.length>1?'${b.toString()},${p[1]}':b.toString(); }
-String cash(num n) => '\
+String fmt(num n) {
+  final s=n.toStringAsFixed(n % 1 == 0 ? 0 : 2);
+  final p=s.split('.'); final w=p[0]; final b=StringBuffer();
+  for(var i=0;i<w.length;i++){if(i>0&&(w.length-i)%3==0)b.write('.');b.write(w[i]);}
+  return p.length>1?'${b.toString()},${p[1]}':b.toString();
+}
+String cash(num n) => r'$' + fmt(n);
+String titleCase(String s) { final v=s.trim(); return v.isEmpty?v:v[0].toUpperCase()+v.substring(1); }
 String stamp() => DateTime.now().toIso8601String();
 String dateLabel(String value) {
-  final d = DateTime.tryParse(value);
-  if (d == null) return value;
-  return d.day.toString().padLeft(2,'0') + '/' + d.month.toString().padLeft(2,'0') + '/' + d.year.toString();
+  final d=DateTime.tryParse(value); if(d==null)return value;
+  return d.day.toString().padLeft(2,'0')+'/'+d.month.toString().padLeft(2,'0')+'/'+d.year.toString();
 }
-double number(String? s) => double.tryParse((s ?? '').replaceAll(',', '.')) ?? 0;
-
+double number(String? s) {
+  var v=(s??'').trim().replaceAll(' ','');
+  if(v.contains(',')&&v.contains('.')) { if(v.lastIndexOf(',')>v.lastIndexOf('.'))v=v.replaceAll('.','').replaceAll(',','.');else v=v.replaceAll(',',''); }
+  else if(v.contains(',')) v=v.replaceAll('.','').replaceAll(',','.');
+  else if(RegExp(r'^-?\d{1,3}(\.\d{3})+$').hasMatch(v)) v=v.replaceAll('.','');
+  return double.tryParse(v)??0;
+}
 class CostosApp extends StatelessWidget {
   const CostosApp({super.key});
   @override Widget build(BuildContext context) => MaterialApp(
@@ -529,7 +539,7 @@ class _RecipesPageState extends State<RecipesPage> {
     Padding(padding:const EdgeInsets.all(12),child:TextField(controller:searchController,decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Buscar o registrar receta',border:OutlineInputBorder()),onChanged:(v)=>setState(()=>query=v))),
     Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:data,builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final list=s.data!.where((r)=>(r['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();final exact=list.any((r)=>(r['name'] as String).toLowerCase()==query.trim().toLowerCase());final canCreate=query.trim().isNotEmpty&&!exact;if(list.isEmpty&&!canCreate)return const Center(child:Text('Buscá una receta por su nombre.'));return ListView(children:[if(canCreate)Card(child:ListTile(leading:const Icon(Icons.add_circle_outline),title:Text('Registrar ${titleCase(query)}'),subtitle:const Text('Crear una receta nueva'),onTap:add)),...list.map((r)=>FutureBuilder<double>(future:cost(r),builder:(c,cs)=>Card(child:ListTile(title:Text(r['name'] as String),subtitle:Text('Costo: ${cs.hasData?cash(cs.data!):'…'} · Venta: ${cash(r['sale_price'] as num)}'),trailing:const Icon(Icons.chevron_right),onTap:()=>detail(r))))) ]); })),
   ]);
-  @override void dispose(){searchController.dispose();super.dispose();
+  @override void dispose(){searchController.dispose();super.dispose();}
 }
 
 class SettingsPage extends StatefulWidget { const SettingsPage({super.key}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
