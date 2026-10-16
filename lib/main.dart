@@ -87,7 +87,7 @@ double number(String? s) {
 class CostosApp extends StatelessWidget {
   const CostosApp({super.key});
   @override Widget build(BuildContext context) => MaterialApp(
-    title: 'Calculadora de costos', debugShowCheckedModeBanner: false,
+    title: 'Costeapp', debugShowCheckedModeBanner: false,
     theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF356859)), scaffoldBackgroundColor: const Color(0xFFF7F8F5)),
     home: const MainPage(),
   );
@@ -703,32 +703,35 @@ class _RecipesPageState extends State<RecipesPage> {
       }),
     ]))),
       actions:[
-        Row(mainAxisSize:MainAxisSize.min,children:[
-          Expanded(child:TextButton.icon(
-            onPressed:() async {
-              Navigator.pop(ctx);
-              if(!mounted)return;
-              await showDialog<void>(context:context,builder:(h)=>AlertDialog(
-                title:Text('Historial de venta · ${r['name']}'),
-                content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),
-                actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))],
-              ));
-              if(mounted)await reopenRecipe(r);
-            },
-            icon:const Icon(Icons.history),
-            label:const Text('Ver historial'),
-          )),
-          const SizedBox(width:8),
-          Expanded(child:FilledButton.icon(
-            onPressed:() async {
-              Navigator.pop(ctx);
-              await addIngredient(r);
-              if(mounted)await reopenRecipe(r);
-            },
-            icon:const Icon(Icons.add),
-            label:const Text('Agregar ingrediente'),
-          )),
-        ]),
+        Wrap(
+          alignment:WrapAlignment.end,
+          spacing:8,
+          children:[
+            TextButton.icon(
+              onPressed:() async {
+                Navigator.pop(ctx);
+                if(!mounted)return;
+                await showDialog<void>(context:context,builder:(h)=>AlertDialog(
+                  title:Text('Historial de venta · ${r['name']}'),
+                  content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),
+                  actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))],
+                ));
+                if(mounted)await reopenRecipe(r);
+              },
+              icon:const Icon(Icons.history),
+              label:const Text('Ver historial'),
+            ),
+            FilledButton.icon(
+              onPressed:() async {
+                Navigator.pop(ctx);
+                await addIngredient(r);
+                if(mounted)await reopenRecipe(r);
+              },
+              icon:const Icon(Icons.add),
+              label:const Text('Agregar ingrediente'),
+            ),
+          ],
+        ),
       ],
     ));
   }
