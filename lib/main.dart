@@ -131,18 +131,101 @@ class _MainPageState extends State<MainPage> {
 
 class Dashboard extends StatelessWidget {
   final ValueChanged<int> go;
-  const Dashboard({super.key,required this.go});
-  @override Widget build(BuildContext context) => ListView(padding:const EdgeInsets.all(20),children:[
-    const Text('Costeá mejor. Decidí con datos.',style:TextStyle(fontSize:24,fontWeight:FontWeight.bold)),
-    const SizedBox(height:8),const Text('Controlá los precios de tus insumos y calculá el costo de tus recetas.'),
-    const SizedBox(height:20),
-    FutureBuilder<List<int>>(future:Future.wait([
-      Store.instance.db.rawQuery('SELECT COUNT(*) c FROM ingredients').then((r)=>r.first['c'] as int),
-      Store.instance.db.rawQuery('SELECT COUNT(*) c FROM recipes').then((r)=>r.first['c'] as int),
-    ]),builder:(c,s)=>Column(children:[Card(child:InkWell(onTap:()=>go(1),child:Padding(padding:const EdgeInsets.all(24),child:Row(children:[const Icon(Icons.inventory_2_outlined,size:36),const SizedBox(width:20),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s.hasData?s.data![0].toString():'…',style:const TextStyle(fontSize:34,fontWeight:FontWeight.bold)),const Text('Insumos registrados')])),const Icon(Icons.arrow_forward)])))),Card(child:InkWell(onTap:()=>go(2),child:Padding(padding:const EdgeInsets.all(24),child:Row(children:[const Icon(Icons.menu_book_outlined,size:36),const SizedBox(width:20),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s.hasData?s.data![1].toString():'…',style:const TextStyle(fontSize:34,fontWeight:FontWeight.bold)),const Text('Recetas registradas')])),const Icon(Icons.arrow_forward)]))))]),
-    const SizedBox(height:12),
-    const SizedBox(height:12),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Actualizá el precio de los insumos cada vez que comprás para mantener los costos al día.'))),
-  ]);
+  const Dashboard({super.key, required this.go});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Text(
+          'Costeá mejor. Decidí con datos.',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const Text('Controlá los precios de tus insumos y calculá el costo de tus recetas.'),
+        const SizedBox(height: 20),
+        FutureBuilder<List<int>>(
+          future: Future.wait([
+            Store.instance.db.rawQuery('SELECT COUNT(*) c FROM ingredients')
+                .then((r) => r.first['c'] as int),
+            Store.instance.db.rawQuery('SELECT COUNT(*) c FROM recipes')
+                .then((r) => r.first['c'] as int),
+          ]),
+          builder: (context, snapshot) {
+            final counts = snapshot.data;
+            return Column(
+              children: [
+                Card(
+                  child: InkWell(
+                    onTap: () => go(1),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.inventory_2_outlined, size: 36),
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  counts == null ? '…' : counts[0].toString(),
+                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                ),
+                                const Text('Insumos registrados'),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.arrow_forward),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Card(
+                  child: InkWell(
+                    onTap: () => go(2),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.menu_book_outlined, size: 36),
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  counts == null ? '…' : counts[1].toString(),
+                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                ),
+                                const Text('Recetas registradas'),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.arrow_forward),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        const Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Actualizá el precio de los insumos cada vez que comprás para mantener los costos al día.'),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 Future<void> editDialog(BuildContext context, String title, List<FormFieldSpec> fields, Future<void> Function(Map<String,String>) onSave) async {
