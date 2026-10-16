@@ -5,7 +5,42 @@ import 'package:sqflite/sqflite.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Store.instance.open();
+  await seedSamples();
   runApp(const CostosApp());
+}
+
+Future<void> seedSamples() async {
+  final db=Store.instance.db;
+  final samples=<Map<String,Object>>[
+    {'name':'Manteca','description':'','qty':2.5,'unit':'kg','price':25000},
+    {'name':'Sal','description':'','qty':500,'unit':'g','price':1785},
+    {'name':'Harina 0000','description':'','qty':1,'unit':'kg','price':1190},
+    {'name':'Polvo de hornear','description':'','qty':1,'unit':'kg','price':7285},
+    {'name':'Queso para rallar','description':'','qty':100,'unit':'g','price':2900},
+    {'name':'Leche','description':'','qty':1,'unit':'l','price':2100},
+    {'name':'Crema','description':'','qty':1,'unit':'kg','price':7800},
+  ];
+  final ids=<String,int>{};
+  for(final s in samples){
+    final existing=await db.query('ingredients',where:'LOWER(name)=?',whereArgs:[(s['name'] as String).toLowerCase()],limit:1);
+    int id;
+    if(existing.isNotEmpty){id=existing.first['id'] as int;}
+    else {
+      final now=stamp();
+      id=await db.insert('ingredients',{...s,'updated':now});
+      await db.insert('ingredient_prices',{'ingredient_id':id,'price':s['price'],'date':now});
+    }
+    ids[s['name'] as String]=id;
+  }
+  final found=await db.query('recipes',where:'LOWER(name)=?',whereArgs:['scon de queso'],limit:1);
+  if(found.isNotEmpty)return;
+  final now=stamp();
+  final rid=await db.insert('recipes',{'name':'Scon de queso','description':'Scon de queso reggianito.','minutes':15,'yield_qty':8,'yield_unit':'unidad','sale_qty':1,'sale_unit':'unidad','sale_price':4000,'updated':now,'sale_updated':now});
+  await db.insert('recipe_prices',{'recipe_id':rid,'price':4000,'date':now});
+  const used=<String,double>{'Manteca':200,'Sal':10,'Harina 0000':440,'Polvo de hornear':10,'Queso para rallar':200,'Leche':100,'Crema':100};
+  for(final e in used.entries){
+    await db.insert('recipe_items',{'recipe_id':rid,'ingredient_id':ids[e.key],'qty':e.value,'unit':e.key=='Leche'?'ml':'g'});
+  }
 }
 
 class Store {
