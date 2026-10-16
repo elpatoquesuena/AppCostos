@@ -327,9 +327,9 @@ class _IngredientsPageState extends State<IngredientsPage> {
     await editDialog(context,'Editar insumo',[
       FormFieldSpec('name','Nombre',initial:item['name'] as String),
       FormFieldSpec('description','Descripción',initial:item['description'] as String,required:false),
-      FormFieldSpec('qty','Cantidad de la presentación',initial:item['qty'].toString(),numeric:true),
+      FormFieldSpec('qty','Cantidad de la presentación',initial:fmt(item['qty'] as num),numeric:true),
       FormFieldSpec('unit','Unidad',initial:item['unit'] as String,options:['g','kg','l','ml','cc','unidad']),
-      FormFieldSpec('price','Precio actual',initial:item['price'].toString(),numeric:true),
+      FormFieldSpec('price','Precio actual',initial:fmt(item['price'] as num),numeric:true),
     ],(v)async{
       final normalized=titleCase(v['name']??'');
       final dup=await Store.instance.db.query('ingredients',where:'LOWER(name)=? AND id<>?',whereArgs:[normalized.toLowerCase(),item['id']],limit:1);
@@ -576,7 +576,7 @@ class _RecipesPageState extends State<RecipesPage> {
     if (ingredients.isEmpty) return;
     final current = ingredients.where((x) => x['id'] == item['ingredient_id']).toList();
     Map<String,Object?>? chosen = current.isEmpty ? ingredients.first : current.first;
-    final qty = TextEditingController(text:item['qty'].toString());
+    final qty = TextEditingController(text:fmt(item['qty'] as num));
     String unit = item['unit'] as String;
     final searchController = TextEditingController(text:chosen['name'] as String);
     if (!mounted) return;
@@ -638,21 +638,46 @@ class _RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> editRecipe(Map<String,Object?> r) async {
-    await editDialog(context,'Editar receta',[FormFieldSpec('name','Nombre',initial:r['name'] as String),FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),FormFieldSpec('minutes','Tiempo de preparación (min)',initial:r['minutes'].toString(),numeric:true),FormFieldSpec('yield_qty','Cantidad que rinde',initial:r['yield_qty'].toString(),numeric:true),FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_qty','Presentación de venta',initial:r['sale_qty'].toString(),numeric:true),FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_price','Precio de venta',initial:r['sale_price'].toString(),numeric:true)],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);await Store.instance.db.update('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now},where:'id=?',whereArgs:[r['id']]);if(price!=(r['sale_price'] as num).toDouble())await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
+    await editDialog(context,'Editar receta',[FormFieldSpec('name','Nombre',initial:r['name'] as String),FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),FormFieldSpec('minutes','Tiempo de preparación (min)',initial:fmt(r['minutes'] as num),numeric:true),FormFieldSpec('yield_qty','Cantidad que rinde',initial:fmt(r['yield_qty'] as num),numeric:true),FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true)],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);await Store.instance.db.update('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now},where:'id=?',whereArgs:[r['id']]);if(price!=(r['sale_price'] as num).toDouble())await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
   }
   Future<void> editSale(Map<String,Object?> r) async {
     await editDialog(context,'Precio y presentación',[
-      FormFieldSpec('qty','Cantidad de venta',initial:r['sale_qty'].toString(),numeric:true),
+      FormFieldSpec('qty','Cantidad de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
       FormFieldSpec('unit','Unidad de venta',initial:r['sale_unit'] as String),
-      FormFieldSpec('price','Precio de venta',initial:r['sale_price'].toString(),numeric:true),
+      FormFieldSpec('price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
     ],(v)async{await Store.instance.db.update('recipes',{'sale_qty':number(v['qty']),'sale_unit':v['unit'],'sale_price':number(v['price']),'sale_updated':stamp()},where:'id=?',whereArgs:[r['id']]);if(mounted)setState((){});widget.onChange();});
   }
+  Future<void> reopenRecipe(Map<String,Object?> r) async {
+    if (!mounted) return;
+    final rows = await Store.instance.db.query('recipes', where:'id=?', whereArgs:[r['id']], limit:1);
+    if (!mounted || rows.isEmpty) return;
+    await detail(rows.first);
+  }
+
   Future<void> detail(Map<String,Object?> r) async {
     final items=await Store.instance.db.rawQuery('SELECT ri.id,ri.recipe_id,ri.ingredient_id,ri.qty,ri.unit,i.name,i.price,i.qty AS pack_qty,i.unit AS pack_unit FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',[r['id']]);
     final saleHistory=await Store.instance.db.query('recipe_prices',where:'recipe_id=?',whereArgs:[r['id']],orderBy:'date DESC');
     final c=await cost(r);final sale=(r['sale_price'] as num).toDouble();final settings=await Store.instance.db.query('settings',where:'key=?',whereArgs:['ideal_margin'],limit:1);final ideal=settings.isEmpty?60.0:number(settings.first['value'] as String);final yieldInfo=unitInfo(r['yield_unit'] as String);final saleInfo=unitInfo(r['sale_unit'] as String);final compatible=yieldInfo.dimension==saleInfo.dimension;final saleCost=compatible&&(yieldInfo.factor*(r['yield_qty'] as num).toDouble()>0)?c*((r['sale_qty'] as num).toDouble()*saleInfo.factor/((r['yield_qty'] as num).toDouble()*yieldInfo.factor)):double.nan;final margin=sale>0?(sale-saleCost)/sale*100:0;
     if(!mounted)return;
-    await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:Text(r['name'] as String),content:SizedBox(width:400,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
+    await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+      title:Row(children:[
+        Expanded(child:Text(r['name'] as String, maxLines:2, overflow:TextOverflow.ellipsis)),
+        IconButton(
+          tooltip:'Editar receta',
+          icon:const Icon(Icons.edit_outlined),
+          onPressed:() async {
+            Navigator.pop(ctx);
+            await editRecipe(r);
+            if(mounted) await reopenRecipe(r);
+          },
+        ),
+        IconButton(
+          tooltip:'Cerrar',
+          icon:const Icon(Icons.close),
+          onPressed:()=>Navigator.pop(ctx),
+        ),
+      ]),
+      content:SizedBox(width:400,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
       Text((r['description'] as String).isEmpty?'Sin descripción':r['description'] as String),
       Text('Tiempo de preparación: ${fmt(r['minutes'] as num)} min'),Text('Rendimiento: ${fmt(r['yield_qty'] as num)} ${r['yield_unit']}'),Text('Costo estimado de la receta: '+cash(c),style:const TextStyle(fontWeight:FontWeight.bold)),Text('Presentación de venta: ${fmt(r['sale_qty'] as num)} ${r['sale_unit']}'),Text('Costo estimado de la presentación: '+(compatible?cash(saleCost):'Unidades incompatibles')),Text('Precio de venta: '+cash(sale)),Text('Margen de contribución: ${fmt(margin)}%',style:TextStyle(color:margin<=0?Colors.red:margin<ideal?Colors.orange:null)),Text('Última actualización: '+dateLabel(r['updated'] as String)),
       const Divider(),const Text('Ingredientes',style:TextStyle(fontWeight:FontWeight.bold)),
@@ -673,26 +698,39 @@ class _RecipesPageState extends State<RecipesPage> {
           title:Text(x['name'] as String),
           subtitle:Text('${x['qty']} ${x['unit']} usados · costo de esta cantidad: ${cash(usedCost)}\nEnvase: ${x['pack_qty']} ${x['pack_unit']} = ${cash(x['price'] as num)}'),
           isThreeLine:true,
-          trailing:IconButton(icon:const Icon(Icons.edit_outlined),tooltip:'Editar ingrediente',onPressed:()async{Navigator.pop(ctx);await editIngredientItem(r,x);await detail(r);}),
+          trailing:IconButton(icon:const Icon(Icons.edit_outlined),tooltip:'Editar ingrediente',onPressed:()async{Navigator.pop(ctx);await editIngredientItem(r,x);if(mounted)await reopenRecipe(r);}),
         );
       }),
-    ]))), actions: [
-      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
-      Row(mainAxisSize:MainAxisSize.min,children:[
-        Flexible(child:TextButton(onPressed:() async {
-          Navigator.pop(ctx);
-          if(!mounted)return;
-          await showDialog<void>(context:context,builder:(h)=>AlertDialog(
-            title:Text('Historial de venta · ${r['name']}'),
-            content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),
-            actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))],
-          ));
-          if(mounted)await detail(r);
-        },child:const Text('Historial'))),
-        Flexible(child:TextButton(onPressed:() async {Navigator.pop(ctx);await editRecipe(r);if(mounted)await detail(r);},child:const Text('Editar'))),
-        Flexible(child:FilledButton(onPressed:() async {Navigator.pop(ctx);await addIngredient(r);if(mounted)await detail(r);},child:const Text('Agregar'))),
-      ]),
-    ]));
+    ]))),
+      actions:[
+        Row(mainAxisSize:MainAxisSize.min,children:[
+          Expanded(child:TextButton.icon(
+            onPressed:() async {
+              Navigator.pop(ctx);
+              if(!mounted)return;
+              await showDialog<void>(context:context,builder:(h)=>AlertDialog(
+                title:Text('Historial de venta · ${r['name']}'),
+                content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),
+                actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))],
+              ));
+              if(mounted)await reopenRecipe(r);
+            },
+            icon:const Icon(Icons.history),
+            label:const Text('Ver historial'),
+          )),
+          const SizedBox(width:8),
+          Expanded(child:FilledButton.icon(
+            onPressed:() async {
+              Navigator.pop(ctx);
+              await addIngredient(r);
+              if(mounted)await reopenRecipe(r);
+            },
+            icon:const Icon(Icons.add),
+            label:const Text('Agregar ingrediente'),
+          )),
+        ]),
+      ],
+    ));
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Padding(padding:const EdgeInsets.all(12),child:TextField(controller:searchController,decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Buscar o registrar receta',border:OutlineInputBorder()),onChanged:(v)=>setState(()=>query=v))),
