@@ -230,36 +230,74 @@ class Dashboard extends StatelessWidget {
 
 Future<void> editDialog(BuildContext context, String title, List<FormFieldSpec> fields, Future<void> Function(Map<String,String>) onSave) async {
   final controllers = <String,TextEditingController>{for(final f in fields) f.key:TextEditingController(text:f.initial)};
-  final key = GlobalKey<FormState>();
+  final formKey = GlobalKey<FormState>();
+
+  Widget buildField(FormFieldSpec f) {
+    if (f.options != null) {
+      return DropdownButtonFormField<String>(
+        value:f.options!.contains(controllers[f.key]!.text)?controllers[f.key]!.text:null,
+        decoration:InputDecoration(labelText:f.label),
+        items:f.options!.map((o)=>DropdownMenuItem(value:o,child:Text(o))).toList(),
+        onChanged:f.readOnly?null:(v){if(v!=null)controllers[f.key]!.text=v;},
+        validator:f.required?(v)=>(v==null||v.isEmpty)?'Campo obligatorio':null:null,
+      );
+    }
+    return TextFormField(
+      controller:controllers[f.key],
+      readOnly:f.readOnly,
+      keyboardType:f.numeric?const TextInputType.numberWithOptions(decimal:true):TextInputType.text,
+      decoration:InputDecoration(labelText:f.label),
+      validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':(f.numeric&&number(v)<=0&&f.key!='minutes'?'Ingresá un valor mayor que cero':null):null,
+    );
+  }
+
+  final List<Widget> fieldWidgets=[];
+  for(var i=0;i<fields.length;i++) {
+    final f=fields[i];
+    if(f.key=='qty' && i+1<fields.length && fields[i+1].key=='unit') {
+      fieldWidgets.add(Padding(
+        padding:const EdgeInsets.only(bottom:12),
+        child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Expanded(child:buildField(f)),
+          const SizedBox(width:12),
+          Expanded(child:buildField(fields[i+1])),
+        ]),
+      ));
+      i++;
+    } else {
+      fieldWidgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f)));
+    }
+  }
+
   await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
     title:Text(title),
-    content: SizedBox(
-      width: 400,
-      child: SingleChildScrollView(
-        child: Form(
-          key: key,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: fields.map((f) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: f.options != null ? DropdownButtonFormField<String>(value:f.options!.contains(controllers[f.key]!.text)?controllers[f.key]!.text:null,decoration:InputDecoration(labelText:f.label),items:f.options!.map((o)=>DropdownMenuItem(value:o,child:Text(o))).toList(),onChanged:(v){if(v!=null)controllers[f.key]!.text=v;},validator:f.required?(v)=>(v==null||v.isEmpty)?'Campo obligatorio':null:null) : TextFormField(
-                controller: controllers[f.key],
-                keyboardType: f.numeric ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
-                decoration: InputDecoration(labelText: f.label),
-                validator: f.required ? (v) => (v == null || v.trim().isEmpty) ? 'Campo obligatorio' : (f.numeric && number(v)<=0 && f.key!='minutes' ? 'Ingresá un valor mayor que cero' : null) : null,
-              ),
-            )).toList(),
-          ),
+    content:SizedBox(
+      width:400,
+      child:SingleChildScrollView(
+        child:Form(
+          key:formKey,
+          child:Column(mainAxisSize:MainAxisSize.min,children:fieldWidgets),
         ),
       ),
     ),
-    actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),FilledButton(onPressed:()async{if(!key.currentState!.validate())return;final values={for(final e in controllers.entries)e.key:e.value.text.trim()};Navigator.pop(ctx);await onSave(values);},child:const Text('Guardar'))],
+    actions:[
+      TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
+      FilledButton(onPressed:()async{
+        if(!formKey.currentState!.validate())return;
+        final values={for(final e in controllers.entries)e.key:e.value.text.trim()};
+        Navigator.pop(ctx);
+        await onSave(values);
+      },child:const Text('Guardar')),
+    ],
   ));
   for(final c in controllers.values){c.dispose();}
 }
+
 class FormFieldSpec {
-  final String key,label,initial; final bool numeric,required; final List<String>? options;
-  const FormFieldSpec(this.key,this.label,{this.initial='',this.numeric=false,this.required=true,this.options});
+  final String key,label,initial;
+  final bool numeric,required,readOnly;
+  final List<String>? options;
+  const FormFieldSpec(this.key,this.label,{this.initial='',this.numeric=false,this.required=true,this.readOnly=false,this.options});
 }
 
 class IngredientsPage extends StatefulWidget {
@@ -547,21 +585,12 @@ class _RecipesPageState extends State<RecipesPage> {
       builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
         title:const Text('Editar ingrediente'),
         content:SizedBox(width:400, child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-          Autocomplete<Map<String,Object?>>(
-            initialValue: TextEditingValue(text: chosen!['name'] as String),
-            displayStringForOption:(x)=>x['name'] as String,
-            optionsBuilder:(v) {
-              final q=v.text.trim().toLowerCase();
-              return ingredients.where((x)=>(x['name'] as String).toLowerCase().contains(q));
-            },
-            onSelected:(x)=>setD(()=>chosen=x),
-            fieldViewBuilder:(context,controller,focusNode,onSubmitted)=>TextField(
-              controller:controller, focusNode:focusNode,
-              decoration:const InputDecoration(labelText:'Buscar insumo',prefixIcon:Icon(Icons.search)),
-              onChanged:(v){ if(chosen != null && v != chosen!['name']) setD(()=>chosen=null); },
-            ),
+          TextFormField(
+            initialValue:chosen!['name'] as String,
+            readOnly:true,
+            decoration:const InputDecoration(labelText:'Insumo',prefixIcon:Icon(Icons.lock_outline)),
           ),
-          if(chosen!=null) Align(alignment:Alignment.centerLeft,child:Text('Presentación: ${chosen!['qty']} ${chosen!['unit']} · envase: ${cash(chosen!['price'] as num)}')),
+          Align(alignment:Alignment.centerLeft,child:Text('Presentación: ${chosen!['qty']} ${chosen!['unit']} · envase: ${cash(chosen!['price'] as num)}')),
           const SizedBox(height:12),
           TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
           const SizedBox(height:12),
@@ -609,7 +638,7 @@ class _RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> editRecipe(Map<String,Object?> r) async {
-    await editDialog(context,'Editar receta',[FormFieldSpec('name','Nombre',initial:r['name'] as String),FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),FormFieldSpec('minutes','Tiempo de preparación (min)',initial:r['minutes'].toString(),numeric:true),FormFieldSpec('yield_qty','Cantidad que rinde',initial:r['yield_qty'].toString(),numeric:true),const FormFieldSpec('yield_unit','Unidad del rendimiento',options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_qty','Presentación de venta',initial:r['sale_qty'].toString(),numeric:true),const FormFieldSpec('sale_unit','Unidad de presentación',options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_price','Precio de venta',initial:r['sale_price'].toString(),numeric:true)],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);await Store.instance.db.update('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now},where:'id=?',whereArgs:[r['id']]);if(price!=(r['sale_price'] as num).toDouble())await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
+    await editDialog(context,'Editar receta',[FormFieldSpec('name','Nombre',initial:r['name'] as String),FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),FormFieldSpec('minutes','Tiempo de preparación (min)',initial:r['minutes'].toString(),numeric:true),FormFieldSpec('yield_qty','Cantidad que rinde',initial:r['yield_qty'].toString(),numeric:true),FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_qty','Presentación de venta',initial:r['sale_qty'].toString(),numeric:true),FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_price','Precio de venta',initial:r['sale_price'].toString(),numeric:true)],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);await Store.instance.db.update('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now},where:'id=?',whereArgs:[r['id']]);if(price!=(r['sale_price'] as num).toDouble())await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
   }
   Future<void> editSale(Map<String,Object?> r) async {
     await editDialog(context,'Precio y presentación',[
@@ -649,9 +678,20 @@ class _RecipesPageState extends State<RecipesPage> {
       }),
     ]))), actions: [
       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
-      TextButton(onPressed: () async { Navigator.pop(ctx); if(!mounted)return; await showDialog<void>(context:context,builder:(h)=>AlertDialog(title:Text('Historial de venta · ${r['name']}'),content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))])); }, child: const Text('Historial de precios')),
-      TextButton(onPressed: () async { Navigator.pop(ctx); await editRecipe(r); }, child: const Text('Editar receta')),
-      FilledButton(onPressed: () async { Navigator.pop(ctx); await addIngredient(r); }, child: const Text('Agregar ingrediente')),
+      Row(mainAxisSize:MainAxisSize.min,children:[
+        Flexible(child:TextButton(onPressed:() async {
+          Navigator.pop(ctx);
+          if(!mounted)return;
+          await showDialog<void>(context:context,builder:(h)=>AlertDialog(
+            title:Text('Historial de venta · ${r['name']}'),
+            content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),
+            actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))],
+          ));
+          if(mounted)await detail(r);
+        },child:const Text('Historial'))),
+        Flexible(child:TextButton(onPressed:() async {Navigator.pop(ctx);await editRecipe(r);if(mounted)await detail(r);},child:const Text('Editar'))),
+        Flexible(child:FilledButton(onPressed:() async {Navigator.pop(ctx);await addIngredient(r);if(mounted)await detail(r);},child:const Text('Agregar'))),
+      ]),
     ]));
   }
   @override Widget build(BuildContext context)=>Column(children:[
