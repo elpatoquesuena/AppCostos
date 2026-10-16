@@ -80,7 +80,7 @@ class _MainPageState extends State<MainPage> {
           setState(() => index = 0);
         }
       },
-      child: Scaffold(
+      child: SafeArea(child: Scaffold(
       appBar: index==0 ? null : AppBar(title: Text(const ['Inicio','Insumos','Recetas','Parámetros'][index])),
       body: IndexedStack(index:index, children:pages),
       bottomNavigationBar: NavigationBar(selectedIndex:index,onDestinationSelected:(i)=>setState(()=>index=i),destinations:const [
@@ -89,7 +89,7 @@ class _MainPageState extends State<MainPage> {
         NavigationDestination(icon:Icon(Icons.menu_book_outlined),label:'Recetas'),
         NavigationDestination(icon:Icon(Icons.tune),label:'Parámetros'),
       ]),
-      ),
+      )),
     );
   }
 }
@@ -104,11 +104,7 @@ class Dashboard extends StatelessWidget {
     FutureBuilder<List<int>>(future:Future.wait([
       Store.instance.db.rawQuery('SELECT COUNT(*) c FROM ingredients').then((r)=>r.first['c'] as int),
       Store.instance.db.rawQuery('SELECT COUNT(*) c FROM recipes').then((r)=>r.first['c'] as int),
-    ]),builder:(c,s)=>Row(children:[
-      Expanded(child:Card(child:InkWell(onTap:()=>go(1),child:Padding(padding:const EdgeInsets.all(18),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Icon(Icons.inventory_2_outlined,size:28),const SizedBox(height:10),Text(s.hasData?s.data![0].toString():'…',style:const TextStyle(fontSize:28,fontWeight:FontWeight.bold)),const Text('Insumos registrados'),const Align(alignment:Alignment.centerRight,child:Icon(Icons.arrow_forward))]))))),
-      const SizedBox(width:12),
-      Expanded(child:Card(child:InkWell(onTap:()=>go(2),child:Padding(padding:const EdgeInsets.all(18),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[const Icon(Icons.menu_book_outlined,size:28),const SizedBox(height:10),Text(s.hasData?s.data![1].toString():'…',style:const TextStyle(fontSize:28,fontWeight:FontWeight.bold)),const Text('Recetas registradas'),const Align(alignment:Alignment.centerRight,child:Icon(Icons.arrow_forward))]))))),
-    ])),
+    ]),builder:(c,s)=>Column(children:[Card(child:InkWell(onTap:()=>go(1),child:Padding(padding:const EdgeInsets.all(24),child:Row(children:[const Icon(Icons.inventory_2_outlined,size:36),const SizedBox(width:20),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s.hasData?s.data![0].toString():'…',style:const TextStyle(fontSize:34,fontWeight:FontWeight.bold)),const Text('Insumos registrados')])),const Icon(Icons.arrow_forward)])))),Card(child:InkWell(onTap:()=>go(2),child:Padding(padding:const EdgeInsets.all(24),child:Row(children:[const Icon(Icons.menu_book_outlined,size:36),const SizedBox(width:20),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(s.hasData?s.data![1].toString():'…',style:const TextStyle(fontSize:34,fontWeight:FontWeight.bold)),const Text('Recetas registradas')])),const Icon(Icons.arrow_forward)]))))]),
     const SizedBox(height:12),
     const SizedBox(height:12),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Actualizá el precio de los insumos cada vez que comprás para mantener los costos al día.'))),
   ]);
@@ -176,9 +172,12 @@ class _IngredientsPageState extends State<IngredientsPage> {
       FormFieldSpec('name','Nombre',initial:item['name'] as String),
       FormFieldSpec('description','Descripción',initial:item['description'] as String,required:false),
       FormFieldSpec('qty','Cantidad de la presentación',initial:item['qty'].toString(),numeric:true),
-      FormFieldSpec('unit','Unidad (g, kg, ml, l, unidad)',initial:item['unit'] as String),
+      FormFieldSpec('unit','Unidad',initial:item['unit'] as String,options:['g','kg','l','ml','cc','unidad']),
       FormFieldSpec('price','Precio actual',initial:item['price'].toString(),numeric:true),
     ],(v)async{
+      final normalized=titleCase(v['name']??'');
+      final dup=await Store.instance.db.query('ingredients',where:'LOWER(name)=? AND id<>?',whereArgs:[normalized.toLowerCase(),item['id']],limit:1);
+      if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe un insumo con ese nombre.')));return;}
       final now=stamp();
       final price=number(v['price']);
       final oldPrice=(item['price'] as num).toDouble();
@@ -188,7 +187,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
         return;
       }
       await Store.instance.db.update('ingredients',{
-        'name':titleCase(v['name']??''),
+        'name':normalized,
         'description':v['description']??'',
         'qty':qty,
         'unit':v['unit'],
@@ -267,7 +266,7 @@ class _RecipesPageState extends State<RecipesPage> {
         return (dimension: 'mass', factor: 1);
       case 'l': case 'lt': case 'lts': case 'litro': case 'litros':
         return (dimension: 'volume', factor: 1000);
-      case 'ml': case 'mililitro': case 'mililitros':
+      case 'ml': case 'cc': case 'mililitro': case 'mililitros':
         return (dimension: 'volume', factor: 1);
       case 'unidad': case 'unidades': case 'u': case 'unid':
         return (dimension: 'count', factor: 1);
@@ -404,6 +403,8 @@ class _RecipesPageState extends State<RecipesPage> {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('La unidad elegida ($unit) no es compatible con la presentación del insumo (${chosen!['unit']}).')));
             return;
           }
+          final already=await Store.instance.db.query('recipe_items',where:'recipe_id=? AND ingredient_id=?',whereArgs:[recipe['id'],chosen!['id']],limit:1);
+          if(already.isNotEmpty){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ese insumo ya está incluido en la receta. Editá su cantidad desde la lista.')));return;}
           await Store.instance.db.insert('recipe_items',{'recipe_id':recipe['id'],'ingredient_id':chosen!['id'],'qty':q,'unit':unit});
           if(ctx.mounted)Navigator.pop(ctx);
           if(mounted)setState((){});
@@ -502,11 +503,11 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> detail(Map<String,Object?> r) async {
     final items=await Store.instance.db.rawQuery('SELECT ri.id,ri.recipe_id,ri.ingredient_id,ri.qty,ri.unit,i.name,i.price,i.qty AS pack_qty,i.unit AS pack_unit FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',[r['id']]);
     final saleHistory=await Store.instance.db.query('recipe_prices',where:'recipe_id=?',whereArgs:[r['id']],orderBy:'date DESC');
-    final c=await cost(r);final sale=(r['sale_price'] as num).toDouble();final margin=sale>0?(sale-c)/sale*100:0;
+    final c=await cost(r);final sale=(r['sale_price'] as num).toDouble();final settings=await Store.instance.db.query('settings',where:'key=?',whereArgs:['ideal_margin'],limit:1);final ideal=settings.isEmpty?60.0:number(settings.first['value'] as String);final yieldInfo=unitInfo(r['yield_unit'] as String);final saleInfo=unitInfo(r['sale_unit'] as String);final compatible=yieldInfo.dimension==saleInfo.dimension;final saleCost=compatible&&(yieldInfo.factor*(r['yield_qty'] as num).toDouble()>0)?c*((r['sale_qty'] as num).toDouble()*saleInfo.factor/((r['yield_qty'] as num).toDouble()*yieldInfo.factor)):double.nan;final margin=sale>0?(sale-saleCost)/sale*100:0;
     if(!mounted)return;
     await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(title:Text(r['name'] as String),content:SizedBox(width:400,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
       Text((r['description'] as String).isEmpty?'Sin descripción':r['description'] as String),
-      Text('Tiempo de preparación: ${fmt(r['minutes'] as num)} min'),Text('Rendimiento: ${fmt(r['yield_qty'] as num)} ${r['yield_unit']}'),Text('Costo estimado de la receta: '+cash(c),style:const TextStyle(fontWeight:FontWeight.bold)),Text('Presentación de venta: ${fmt(r['sale_qty'] as num)} ${r['sale_unit']}'),Text('Costo estimado de la presentación: '+cash(c*((r['sale_qty'] as num).toDouble()/((r['yield_qty'] as num).toDouble()<=0?1:(r['yield_qty'] as num).toDouble())))),Text('Precio de venta: '+cash(sale)),Text('Margen de contribución: ${fmt(margin)}%'),Text('Última actualización: '+dateLabel(r['updated'] as String)),
+      Text('Tiempo de preparación: ${fmt(r['minutes'] as num)} min'),Text('Rendimiento: ${fmt(r['yield_qty'] as num)} ${r['yield_unit']}'),Text('Costo estimado de la receta: '+cash(c),style:const TextStyle(fontWeight:FontWeight.bold)),Text('Presentación de venta: ${fmt(r['sale_qty'] as num)} ${r['sale_unit']}'),Text('Costo estimado de la presentación: '+(compatible?cash(saleCost):'Unidades incompatibles')),Text('Precio de venta: '+cash(sale)),Text('Margen de contribución: ${fmt(margin)}%',style:TextStyle(color:margin<=0?Colors.red:margin<ideal?Colors.orange:null)),Text('Última actualización: '+dateLabel(r['updated'] as String)),
       const Divider(),const Text('Ingredientes',style:TextStyle(fontWeight:FontWeight.bold)),
       if(items.isEmpty)const Text('Agregá ingredientes para calcular el costo.'),
       ...items.map((x) {
@@ -530,14 +531,14 @@ class _RecipesPageState extends State<RecipesPage> {
       }),
     ]))), actions: [
       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
-      TextButton(onPressed: () async { Navigator.pop(ctx); if(!mounted)return; await showDialog<void>(context:context,builder:(h)=>AlertDialog(title:Text('Historial de venta · ${r['name']}'),content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))])); }, child: const Text('Historial de venta')),
+      TextButton(onPressed: () async { Navigator.pop(ctx); if(!mounted)return; await showDialog<void>(context:context,builder:(h)=>AlertDialog(title:Text('Historial de venta · ${r['name']}'),content:SizedBox(width:320,child:saleHistory.isEmpty?const Text('Sin historial registrado.'):ListView(shrinkWrap:true,children:saleHistory.map((x)=>ListTile(title:Text(cash(x['price'] as num)),subtitle:Text(dateLabel(x['date'] as String)))).toList())),actions:[TextButton(onPressed:()=>Navigator.pop(h),child:const Text('Cerrar'))])); }, child: const Text('Historial de precios')),
       TextButton(onPressed: () async { Navigator.pop(ctx); await editRecipe(r); }, child: const Text('Editar receta')),
       FilledButton(onPressed: () async { Navigator.pop(ctx); await addIngredient(r); }, child: const Text('Agregar ingrediente')),
     ]));
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Padding(padding:const EdgeInsets.all(12),child:TextField(controller:searchController,decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Buscar o registrar receta',border:OutlineInputBorder()),onChanged:(v)=>setState(()=>query=v))),
-    Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:data,builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final list=s.data!.where((r)=>(r['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();final exact=list.any((r)=>(r['name'] as String).toLowerCase()==query.trim().toLowerCase());final canCreate=query.trim().isNotEmpty&&!exact;if(list.isEmpty&&!canCreate)return const Center(child:Text('Buscá una receta por su nombre.'));return ListView(children:[if(canCreate)Card(child:ListTile(leading:const Icon(Icons.add_circle_outline),title:Text('Registrar ${titleCase(query)}'),subtitle:const Text('Crear una receta nueva'),onTap:add)),...list.map((r)=>FutureBuilder<double>(future:cost(r),builder:(c,cs)=>Card(child:ListTile(title:Text(r['name'] as String),subtitle:Text('Costo: ${cs.hasData?cash(cs.data!):'…'} · Venta: ${cash(r['sale_price'] as num)}'),trailing:const Icon(Icons.chevron_right),onTap:()=>detail(r))))) ]); })),
+    Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:data,builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final list=s.data!.where((r)=>(r['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();final exact=list.any((r)=>(r['name'] as String).toLowerCase()==query.trim().toLowerCase());final canCreate=query.trim().isNotEmpty&&!exact;if(list.isEmpty&&!canCreate)return const Center(child:Text('Buscá una receta por su nombre.'));return ListView(children:[if(canCreate)Card(child:ListTile(leading:const Icon(Icons.add_circle_outline),title:Text('Registrar ${titleCase(query)}'),subtitle:const Text('Crear una receta nueva'),onTap:add)),...list.map((r)=>FutureBuilder<int>(future:Store.instance.db.query('recipe_items',where:'recipe_id=?',whereArgs:[r['id']]).then((x)=>x.length),builder:(c,count)=>Card(child:ListTile(title:Text(r['name'] as String),subtitle:(count.data??0)==0?const Text('⚠ Agregá ingredientes para calcular el costo',style:TextStyle(color:Colors.orange)):FutureBuilder<double>(future:cost(r),builder:(c,cs)=>Text('Costo: ${cs.hasData?cash(cs.data!):'…'} · Venta: ${cash(r['sale_price'] as num)}')),trailing:const Icon(Icons.chevron_right),onTap:()=>detail(r))))) ]); })),
   ]);
   @override void dispose(){searchController.dispose();super.dispose();}
 }
@@ -557,8 +558,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
   }
   @override Widget build(BuildContext context)=>!ready?const Center(child:CircularProgressIndicator()):ListView(padding:const EdgeInsets.all(20),children:[
-    const Text('Parámetros',style:TextStyle(fontSize:24,fontWeight:FontWeight.bold)),
-    const SizedBox(height:8),const Text('Configurá los valores que se usan para estimar tus costos.'),
+    const Text('Configurá los valores que se usan para estimar tus costos.'),
     const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
     const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
     const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
