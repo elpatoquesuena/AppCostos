@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+import 'package:excel/excel.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -874,6 +879,131 @@ class _RecipesPageState extends State<RecipesPage> {
   @override void dispose(){searchController.dispose();super.dispose();}
 }
 
+
+class DataTransferService {
+  static const tableColumns = <String, List<String>>{
+    'ingredients': ['id','name','description','qty','unit','price','updated'],
+    'ingredient_prices': ['id','ingredient_id','price','date'],
+    'recipes': ['id','name','description','minutes','yield_qty','yield_unit','sale_qty','sale_unit','sale_price','updated','sale_updated'],
+    'recipe_items': ['id','recipe_id','ingredient_id','qty','unit'],
+    'recipe_prices': ['id','recipe_id','price','date'],
+    'settings': ['key','value'],
+  };
+  static const importOrder = ['ingredients','recipes','ingredient_prices','recipe_prices','recipe_items','settings'];
+  static const deleteOrder = ['recipe_items','ingredient_prices','recipe_prices','ingredients','recipes','settings'];
+
+  static CellValue? toCellValue(Object? value) {
+    if (value == null) return TextCellValue('');
+    if (value is int) return IntCellValue(value);
+    if (value is double) return DoubleCellValue(value);
+    if (value is num) return DoubleCellValue(value.toDouble());
+    if (value is bool) return BoolCellValue(value);
+    return TextCellValue(value.toString());
+  }
+
+  static Future<File> exportWorkbook() async {
+    final workbook = Excel.createExcel();
+    for (final table in tableColumns.keys) {
+      final sheet = workbook[table];
+      sheet.appendRow(tableColumns[table]!.map((c) => TextCellValue(c)).toList());
+      final rows = await Store.instance.db.query(table, orderBy: table == 'settings' ? 'key' : 'id');
+      for (final row in rows) {
+        sheet.appendRow(tableColumns[table]!.map((column) => toCellValue(row[column])).toList());
+      }
+    }
+    if (workbook.tables.containsKey('Sheet1')) workbook.delete('Sheet1');
+    final bytes = workbook.save();
+    if (bytes == null) throw Exception('No se pudo generar el archivo Excel.');
+    final directory = await getTemporaryDirectory();
+    final file = File(path.join(directory.path, 'costeapp_respaldo.xlsx'));
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  static String cellText(Data? cell) {
+    final value = cell?.value;
+    if (value == null) return '';
+    if (value is TextCellValue) return value.value.toString();
+    if (value is IntCellValue) return value.value.toString();
+    if (value is DoubleCellValue) return value.value.toString();
+    if (value is BoolCellValue) return value.value.toString();
+    if (value is DateCellValue) return value.asDateTimeLocal().toIso8601String();
+    if (value is DateTimeCellValue) return value.asDateTimeLocal().toIso8601String();
+    if (value is FormulaCellValue) return value.formula;
+    return value.toString();
+  }
+
+  static Object? parseValue(String table, String column, String raw) {
+    if (raw.trim().isEmpty) return null;
+    const integerColumns = {'id','ingredient_id','recipe_id'};
+    const numericColumns = {'qty','price','minutes','yield_qty','sale_qty','sale_price'};
+    if (integerColumns.contains(column)) {
+      final value = num.tryParse(raw.trim());
+      if (value == null) throw FormatException('El valor "$raw" no es válido para $column.');
+      return value.toInt();
+    }
+    if (numericColumns.contains(column)) {
+      final value = double.tryParse(raw.trim().replaceAll(' ', '').replaceAll(',', '.'));
+      if (value == null) throw FormatException('El valor "$raw" no es válido para $column.');
+      return value;
+    }
+    return raw;
+  }
+
+  static Future<Map<String, List<Map<String, Object?>>>> readWorkbook(List<int> bytes) async {
+    final workbook = Excel.decodeBytes(bytes);
+    final parsed = <String, List<Map<String, Object?>>>{};
+    for (final entry in tableColumns.entries) {
+      final table = entry.key;
+      final columns = entry.value;
+      final sheet = workbook.tables[table];
+      if (sheet == null || sheet.rows.isEmpty) throw FormatException('Falta la hoja "$table" o está vacía.');
+      final headers = sheet.rows.first.map((cell) => cellText(cell).trim()).toList();
+      for (final required in columns) {
+        if (!headers.contains(required)) throw FormatException('La hoja "$table" no contiene la columna "$required".');
+      }
+      final rows = <Map<String, Object?>>[];
+      for (final cells in sheet.rows.skip(1)) {
+        if (cells.every((cell) => cellText(cell).trim().isEmpty)) continue;
+        final row = <String, Object?>{};
+        for (final column in columns) {
+          final index = headers.indexOf(column);
+          final raw = index < cells.length ? cellText(cells[index]) : '';
+          final value = parseValue(table, column, raw);
+          if (value != null) row[column] = value;
+        }
+        rows.add(row);
+      }
+      parsed[table] = rows;
+    }
+    final ingredientIds = parsed['ingredients']!.map((r) => r['id']).whereType<int>().toSet();
+    final recipeIds = parsed['recipes']!.map((r) => r['id']).whereType<int>().toSet();
+    for (final row in parsed['recipe_items']!) {
+      if (!ingredientIds.contains(row['ingredient_id']) || !recipeIds.contains(row['recipe_id'])) {
+        throw FormatException('Hay un ingrediente de receta que no coincide con los insumos o recetas del archivo.');
+      }
+    }
+    for (final row in parsed['ingredient_prices']!) {
+      if (!ingredientIds.contains(row['ingredient_id'])) throw FormatException('El historial de precios hace referencia a un insumo inexistente.');
+    }
+    for (final row in parsed['recipe_prices']!) {
+      if (!recipeIds.contains(row['recipe_id'])) throw FormatException('El historial de venta hace referencia a una receta inexistente.');
+    }
+    return parsed;
+  }
+
+  static Future<void> importWorkbook(Map<String, List<Map<String, Object?>>> data) async {
+    await Store.instance.db.transaction((txn) async {
+      for (final table in deleteOrder) { await txn.delete(table); }
+      for (final table in importOrder) {
+        for (final row in data[table]!) {
+          await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
+  }
+}
+
 class SettingsPage extends StatefulWidget { const SettingsPage({super.key}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
 class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
@@ -888,11 +1018,57 @@ class _SettingsPageState extends State<SettingsPage> {
     await Store.instance.db.update('settings',{'value':number(margin.text).toString()},where:'key=?',whereArgs:['ideal_margin']);
     if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
   }
+  Future<void> exportData() async {
+    try {
+      final file = await DataTransferService.exportWorkbook();
+      await Share.shareXFiles([XFile(file.path)], text: 'Respaldo de Costeapp');
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se pudo exportar el Excel: $e')));
+    }
+  }
+
+  Future<void> importData() async {
+    try {
+      final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx'], withData: true);
+      if (picked == null || picked.files.isEmpty) return;
+      final bytes = picked.files.single.bytes;
+      if (bytes == null) throw Exception('No se pudo leer el archivo seleccionado.');
+      final data = await DataTransferService.readWorkbook(bytes);
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Reemplazar los datos actuales'),
+          content: Text('El archivo contiene \${data['ingredients']!.length} insumos y \${data['recipes']!.length} recetas. Se reemplazarán todos los datos actuales, incluidos los historiales y parámetros. Esta acción no se puede deshacer. ¿Querés continuar?'),
+          actions: [
+            TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Importar y reemplazar')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await DataTransferService.importWorkbook(data);
+      await load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Datos importados correctamente. Reiniciá la aplicación para actualizar todas las pantallas.')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se pudo importar el Excel: $e')));
+    }
+  }
+
   @override Widget build(BuildContext context)=>!ready?const Center(child:CircularProgressIndicator()):ListView(padding:const EdgeInsets.all(20),children:[
     const Text('Configurá los valores que se usan para estimar tus costos.'),
     const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
     const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
     const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
+    const SizedBox(height:28),
+    const Text('Respaldo y migración',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+    const SizedBox(height:8),
+    const Text('Exportá toda la información a un Excel para guardarla o transferirla a otro dispositivo. La importación reemplaza los datos que hay actualmente en este teléfono.'),
+    const SizedBox(height:12),
+    OutlinedButton.icon(onPressed:exportData,icon:const Icon(Icons.file_download_outlined),label:const Text('Exportar toda la información a Excel')),
+    const SizedBox(height:8),
+    OutlinedButton.icon(onPressed:importData,icon:const Icon(Icons.file_upload_outlined),label:const Text('Importar Excel de otro dispositivo')),
     const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
   ]);
   @override void dispose(){rate.dispose();margin.dispose();super.dispose();}
