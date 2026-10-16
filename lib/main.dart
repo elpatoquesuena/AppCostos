@@ -151,7 +151,7 @@ class CostosApp extends StatelessWidget {
   const CostosApp({super.key});
   @override Widget build(BuildContext context) => MaterialApp(
     title: 'Costeapp', debugShowCheckedModeBanner: false,
-    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF356859)), scaffoldBackgroundColor: const Color(0xFFF7F8F5)),
+    theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF17365D)), scaffoldBackgroundColor: const Color(0xFFF7F8FA), appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF17365D), foregroundColor: Colors.white, elevation: 0), cardTheme: const CardThemeData(color: Colors.white, elevation: 1, margin: EdgeInsets.symmetric(vertical: 6)), filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: const Color(0xFF17365D), foregroundColor: Colors.white))),
     home: const MainPage(),
   );
 }
@@ -169,6 +169,7 @@ class _MainPageState extends State<MainPage> {
       Dashboard(key: ValueKey('home'+revision.toString()), go: (i) => setState(() => index=i)),
       IngredientsPage(onChange: refresh),
       RecipesPage(onChange: refresh),
+      const PresupuestoPage(),
       SettingsPage(onDataChanged: refresh),
     ];
     return PopScope(
@@ -179,12 +180,14 @@ class _MainPageState extends State<MainPage> {
         }
       },
       child: SafeArea(child: Scaffold(
-      appBar: index==0 ? null : AppBar(title: Text(const ['Inicio','Insumos','Recetas','Parámetros'][index])),
+      appBar: index==0 ? null : AppBar(title: Text(const ['Inicio','Insumos','Recetas','Presupuesto','Parámetros'][index])),
+      
       body: IndexedStack(index:index, children:pages),
       bottomNavigationBar: NavigationBar(selectedIndex:index,onDestinationSelected:(i)=>setState(()=>index=i),destinations:const [
         NavigationDestination(icon:Icon(Icons.dashboard_outlined),label:'Inicio'),
         NavigationDestination(icon:Icon(Icons.inventory_2_outlined),label:'Insumos'),
         NavigationDestination(icon:Icon(Icons.menu_book_outlined),label:'Recetas'),
+        NavigationDestination(icon:Icon(Icons.calculate_outlined),label:'Presupuesto'),
         NavigationDestination(icon:Icon(Icons.tune),label:'Parámetros'),
       ]),
       )),
@@ -203,7 +206,7 @@ class Dashboard extends StatelessWidget {
       children: [
         const Text(
           'Costeá mejor. Decidí con datos.',
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF17365D)),
         ),
         const SizedBox(height: 8),
         const Text('Controlá los precios de tus insumos y calculá el costo de tus recetas.'),
@@ -227,7 +230,7 @@ class Dashboard extends StatelessWidget {
                       padding: const EdgeInsets.all(24),
                       child: Row(
                         children: [
-                          const Icon(Icons.inventory_2_outlined, size: 36),
+                          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFE7EEF7), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.inventory_2_outlined, size: 32, color: Color(0xFF17365D))),
                           const SizedBox(width: 20),
                           Expanded(
                             child: Column(
@@ -235,7 +238,7 @@ class Dashboard extends StatelessWidget {
                               children: [
                                 Text(
                                   counts == null ? '…' : counts[0].toString(),
-                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Color(0xFF17365D)),
                                 ),
                                 const Text('Insumos registrados'),
                               ],
@@ -255,7 +258,7 @@ class Dashboard extends StatelessWidget {
                       padding: const EdgeInsets.all(24),
                       child: Row(
                         children: [
-                          const Icon(Icons.menu_book_outlined, size: 36),
+                          Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFDCEAF5), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.menu_book_outlined, size: 32, color: Color(0xFF245B86))),
                           const SizedBox(width: 20),
                           Expanded(
                             child: Column(
@@ -263,7 +266,7 @@ class Dashboard extends StatelessWidget {
                               children: [
                                 Text(
                                   counts == null ? '…' : counts[1].toString(),
-                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Color(0xFF17365D)),
                                 ),
                                 const Text('Recetas registradas'),
                               ],
@@ -879,6 +882,223 @@ class _RecipesPageState extends State<RecipesPage> {
   @override void dispose(){searchController.dispose();super.dispose();}
 }
 
+
+
+class PresupuestoPage extends StatefulWidget {
+  const PresupuestoPage({super.key});
+  @override State<PresupuestoPage> createState() => _PresupuestoPageState();
+}
+
+class _PresupuestoPageState extends State<PresupuestoPage> {
+  final searchController = TextEditingController();
+  final presentationController = TextEditingController();
+  String query = '';
+  Map<String,Object?>? selected;
+
+  ({String dimension, double factor}) unitInfo(String raw) {
+    final u = raw.trim().toLowerCase().replaceAll(' ', '');
+    switch (u) {
+      case 'kg': case 'kilo': case 'kilos': case 'kilogramo': case 'kilogramos':
+        return (dimension:'mass',factor:1000);
+      case 'g': case 'gr': case 'gramo': case 'gramos':
+        return (dimension:'mass',factor:1);
+      case 'l': case 'lt': case 'lts': case 'litro': case 'litros':
+        return (dimension:'volume',factor:1000);
+      case 'ml': case 'cc': case 'mililitro': case 'mililitros':
+        return (dimension:'volume',factor:1);
+      case 'unidad': case 'unidades': case 'u': case 'unid':
+        return (dimension:'count',factor:1);
+      default:
+        return (dimension:'other:' + u,factor:1);
+    }
+  }
+
+  Future<({double batchCost, double margin})> metrics(Map<String,Object?> recipe) async {
+    final rows = await Store.instance.db.rawQuery(
+      'SELECT ri.qty,ri.unit,i.price,i.qty AS pack_qty,i.unit AS pack_unit FROM recipe_items ri JOIN ingredients i ON i.id=ri.ingredient_id WHERE ri.recipe_id=?',
+      [recipe['id']],
+    );
+    double total = 0;
+    for (final x in rows) {
+      final used = unitInfo(x['unit'] as String);
+      final pack = unitInfo(x['pack_unit'] as String);
+      if (used.dimension != pack.dimension) {
+        throw StateError('Hay unidades incompatibles en los ingredientes de esta receta.');
+      }
+      final packBase = (x['pack_qty'] as num).toDouble() * pack.factor;
+      if (packBase > 0) {
+        total += ((x['price'] as num).toDouble() / packBase) *
+            ((x['qty'] as num).toDouble() * used.factor);
+      }
+    }
+    final rates = await Store.instance.db.query('settings', where:'key=?', whereArgs:['hourly_rate'], limit:1);
+    final hourlyRate = rates.isEmpty ? 0.0 : number(rates.first['value'] as String);
+    total += ((recipe['minutes'] as num).toDouble() / 60) * hourlyRate;
+    final margins = await Store.instance.db.query('settings', where:'key=?', whereArgs:['ideal_margin'], limit:1);
+    final margin = margins.isEmpty ? 60.0 : number(margins.first['value'] as String);
+    return (batchCost:total, margin:margin);
+  }
+
+  void clearSelection() {
+    setState(() {
+      selected = null;
+      query = '';
+      searchController.clear();
+      presentationController.clear();
+    });
+  }
+
+  @override Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String,Object?>>>(
+      future: Store.instance.db.query('recipes', orderBy:'name COLLATE NOCASE'),
+      builder:(context,snapshot) {
+        if (!snapshot.hasData) return const Center(child:CircularProgressIndicator());
+        final recipes = snapshot.data!;
+        final matches = query.trim().isEmpty
+            ? <Map<String,Object?>>[]
+            : recipes.where((r)=>(r['name'] as String).toLowerCase().contains(query.trim().toLowerCase())).toList();
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text('Presupuesto', style:TextStyle(fontSize:24,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),
+            const SizedBox(height:6),
+            const Text('Consultá el costo de una receta y calculá el precio sugerido para otra presentación.'),
+            const SizedBox(height:16),
+            TextField(
+              controller:searchController,
+              decoration:InputDecoration(
+                labelText:'Buscar receta',
+                hintText:'Escribí el nombre de una receta',
+                prefixIcon:const Icon(Icons.search,color:Color(0xFF245B86)),
+                suffixIcon:searchController.text.isEmpty?null:IconButton(icon:const Icon(Icons.close),onPressed:clearSelection),
+                border:const OutlineInputBorder(),
+              ),
+              onChanged:(v)=>setState(() {
+                query=v;
+                if(selected!=null && v.trim().toLowerCase()!=(selected!['name'] as String).toLowerCase()) {
+                  selected=null;
+                  presentationController.clear();
+                }
+              }),
+            ),
+            if (selected == null && query.trim().isNotEmpty) ...[
+              const SizedBox(height:8),
+              if(matches.isEmpty) const Padding(padding:EdgeInsets.all(12),child:Text('No se encontraron recetas con ese nombre.')),
+              ...matches.map((r)=>Card(
+                child:ListTile(
+                  leading:const Icon(Icons.menu_book_outlined,color:Color(0xFF245B86)),
+                  title:Text(r['name'] as String),
+                  subtitle:Text((r['description'] as String).isEmpty?'Sin descripción':r['description'] as String,maxLines:2,overflow:TextOverflow.ellipsis),
+                  trailing:const Icon(Icons.chevron_right),
+                  onTap:()=>setState(() {
+                    selected=r;
+                    query=r['name'] as String;
+                    searchController.text=query;
+                    presentationController.clear();
+                  }),
+                ),
+              )),
+            ],
+            if (selected != null) ...[
+              const SizedBox(height:12),
+              FutureBuilder<({double batchCost, double margin})>(
+                future:metrics(selected!),
+                builder:(context,calc) {
+                  if(calc.hasError) return Card(child:Padding(padding:const EdgeInsets.all(16),child:Text('No se pudo calcular esta receta: ${calc.error}')));
+                  if(!calc.hasData) return const Padding(padding:EdgeInsets.all(24),child:Center(child:CircularProgressIndicator()));
+                  final r=selected!;
+                  final m=calc.data!;
+                  final yieldQty=(r['yield_qty'] as num).toDouble();
+                  final yieldInfo=unitInfo(r['yield_unit'] as String);
+                  final saleInfo=unitInfo(r['sale_unit'] as String);
+                  final saleQty=(r['sale_qty'] as num).toDouble();
+                  final compatible=yieldInfo.dimension==saleInfo.dimension && yieldQty>0;
+                  final currentCost=compatible ? m.batchCost * saleQty * saleInfo.factor / (yieldQty * yieldInfo.factor) : double.nan;
+                  final newQty=number(presentationController.text);
+                  final newCost=compatible && newQty>0 ? m.batchCost * newQty * saleInfo.factor / (yieldQty * yieldInfo.factor) : double.nan;
+                  final canSuggest=newCost.isFinite && m.margin<100 && m.margin>=0;
+                  final suggested=canSuggest ? newCost/(1-m.margin/100) : double.nan;
+                  return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                    Card(
+                      child:Padding(
+                        padding:const EdgeInsets.all(18),
+                        child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                          Row(children:[
+                            const Expanded(child:Text('RECETA SELECCIONADA',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold,letterSpacing:1,color:Color(0xFF245B86)))),
+                            IconButton(tooltip:'Elegir otra receta',onPressed:clearSelection,icon:const Icon(Icons.close)),
+                          ]),
+                          Text(r['name'] as String,style:const TextStyle(fontSize:22,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),
+                          const SizedBox(height:6),
+                          Text((r['description'] as String).isEmpty?'Sin descripción':r['description'] as String),
+                          const Divider(height:24),
+                          _budgetInfo('Presentación actual','${fmt(saleQty)} ${r['sale_unit']}'),
+                          _budgetInfo('Costo por presentación',compatible?cash(currentCost):'Unidades incompatibles'),
+                          _budgetInfo('Precio de venta actual',cash(r['sale_price'] as num)),
+                        ]),
+                      ),
+                    ),
+                    Card(
+                      child:Padding(
+                        padding:const EdgeInsets.all(18),
+                        child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                          const Text('Calcular otra presentación',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),
+                          const SizedBox(height:6),
+                          Text('La unidad se mantiene en ${r['sale_unit']}. El margen de contribución ideal configurado es ${fmt(m.margin)}%.'),
+                          const SizedBox(height:12),
+                          TextField(
+                            controller:presentationController,
+                            keyboardType:const TextInputType.numberWithOptions(decimal:true),
+                            inputFormatters:[NumericThousandsFormatter()],
+                            decoration:InputDecoration(labelText:'Nueva presentación (${r['sale_unit']})',hintText:'Ej. 250',prefixIcon:const Icon(Icons.scale_outlined,color:Color(0xFF245B86)),border:const OutlineInputBorder()),
+                            onChanged:(_)=>setState((){}),
+                          ),
+                          if(newQty>0 && compatible) ...[
+                            const SizedBox(height:18),
+                            Container(
+                              padding:const EdgeInsets.all(16),
+                              decoration:BoxDecoration(color:const Color(0xFFE7EEF7),borderRadius:BorderRadius.circular(12)),
+                              child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                                const Text('RESULTADO DEL PRESUPUESTO',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold,letterSpacing:1,color:Color(0xFF245B86))),
+                                const SizedBox(height:10),
+                                _budgetInfo('Nueva presentación','${fmt(newQty)} ${r['sale_unit']}'),
+                                _budgetInfo('Costo estimado',cash(newCost)),
+                                const Divider(),
+                                Text('Precio de venta sugerido',style:TextStyle(color:Color(0xFF17365D),fontWeight:FontWeight.w600)),
+                                const SizedBox(height:4),
+                                Text(canSuggest?cash(suggested):'No disponible',style:const TextStyle(fontSize:28,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),
+                                if(!canSuggest) const Text('Revisá el margen ideal en Parámetros: debe ser igual o mayor que 0% y menor que 100%.'),
+                              ]),
+                            ),
+                          ],
+                          if(!compatible) const Padding(padding:EdgeInsets.only(top:10),child:Text('No se puede calcular porque el rendimiento y la presentación de venta usan unidades incompatibles.',style:TextStyle(color:Colors.red))),
+                        ]),
+                      ),
+                    ),
+                  ]);
+                },
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _budgetInfo(String label,String value) => Padding(
+    padding:const EdgeInsets.symmetric(vertical:5),
+    child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Expanded(child:Text(label,style:const TextStyle(color:Color(0xFF5D6B7A)))),
+      const SizedBox(width:12),
+      Flexible(child:Text(value,textAlign:TextAlign.end,style:const TextStyle(fontWeight:FontWeight.w600))),
+    ]),
+  );
+
+  @override void dispose() {
+    searchController.dispose();
+    presentationController.dispose();
+    super.dispose();
+  }
+}
 
 class DataTransferService {
   static const tableColumns = <String, List<String>>{
