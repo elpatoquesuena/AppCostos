@@ -18,6 +18,8 @@ jobs:
           channel: stable
       - name: Generate Android platform files
         run: flutter create --platforms=android --org com.appcostos --project-name costeapp --no-pub .
+      - name: Set Android compile SDK
+        run: sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' android/app/build.gradle.kts
       - name: Set Android app display name
         run: sed -i 's/android:label="costeapp"/android:label="Costeapp"/' android/app/src/main/AndroidManifest.xml
       - name: Resolve dependencies
