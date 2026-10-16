@@ -17,7 +17,7 @@ jobs:
         with:
           channel: stable
       - name: Generate Android platform files
-        run: flutter create --platforms=android --org com.appcostos --project-name app_costos --no-pub .
+        run: flutter create --platforms=android --org com.appcostos --project-name costeapp --no-pub .
       - name: Resolve dependencies
         run: flutter pub get
       - name: Analyze
