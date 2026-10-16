@@ -286,122 +286,78 @@ class Dashboard extends StatelessWidget {
   }
 }
 
-Future<void> editDialog(
-  BuildContext context,
-  String title,
-  List<FormFieldSpec> fields,
-  Future<void> Function(Map<String,String>) onSave, {
-  Future<void> Function()? onDelete,
-}) async {
-  final controllers = <String,TextEditingController>{
-    for(final f in fields) f.key:TextEditingController(text:f.initial)
-  };
-  final formKey = GlobalKey<FormState>();
-
+Future<void> editDialog(BuildContext context,String title,List<FormFieldSpec> fields,Future<void> Function(Map<String,String>) onSave,{Future<void> Function()? onDelete}) async {
+  final controllers=<String,TextEditingController>{for(final f in fields)f.key:TextEditingController(text:f.initial)};
+  final selected=<String,String>{for(final f in fields.where((x)=>x.options!=null))f.key:(f.options!.contains(f.initial)?f.initial:f.options!.first)};
+  final formKey=GlobalKey<FormState>();
+  var confirmingDelete=false;
   List<String> optionsFor(FormFieldSpec f) {
-    final options=f.options ?? const <String>[];
-    if(f.key=='sale_unit' && controllers.containsKey('yield_unit')) {
-      final dimension=unitDimension(controllers['yield_unit']!.text);
-      final compatible=options.where((o)=>unitDimension(o)==dimension).toList();
+    final options=f.options??const <String>[];
+    if(f.key=='sale_unit'&&selected.containsKey('yield_unit')) {
+      final compatible=options.where((o)=>unitDimension(o)==unitDimension(selected['yield_unit']!)).toList();
       if(compatible.isNotEmpty)return compatible;
     }
     return options;
   }
-
-  Widget buildField(FormFieldSpec f, StateSetter setD) {
-    if (f.options != null) {
+  Widget buildField(FormFieldSpec f,StateSetter setD) {
+    if(f.options!=null) {
       final options=optionsFor(f);
-      final current=controllers[f.key]!.text;
-      final value=options.contains(current)?current:(options.isEmpty?null:options.first);
+      var value=selected[f.key];
+      if(value==null||!options.contains(value))value=options.isEmpty?null:options.first;
+      if(value!=null)selected[f.key]=value;
       return DropdownButtonFormField<String>(
-        key:ValueKey('${f.key}:$value:${options.join(",")}'),
-        value:value,
+        key:ValueKey('${f.key}:$value:${options.join(",")}'),value:value,
         decoration:InputDecoration(labelText:f.label),
         items:options.map((o)=>DropdownMenuItem(value:o,child:Text(o))).toList(),
-        onChanged:f.readOnly?null:(v){
-          if(v==null)return;
-          setD((){
-            controllers[f.key]!.text=v;
-            if(f.key=='yield_unit' && controllers.containsKey('sale_unit')) {
-              final saleOptions=fields.firstWhere((x)=>x.key=='sale_unit').options ?? const <String>[];
-              final compatible=saleOptions.where((o)=>unitDimension(o)==unitDimension(v)).toList();
-              if(compatible.isNotEmpty && !compatible.contains(controllers['sale_unit']!.text)) {
-                controllers['sale_unit']!.text=compatible.first;
-              }
+        onChanged:f.readOnly?null:(v){if(v==null)return;setD((){
+          selected[f.key]=v;controllers[f.key]!.text=v;
+          if(f.key=='yield_unit'&&selected.containsKey('sale_unit')) {
+            final all=fields.firstWhere((x)=>x.key=='sale_unit').options??const <String>[];
+            final compatible=all.where((o)=>unitDimension(o)==unitDimension(v)).toList();
+            if(compatible.isNotEmpty&&!compatible.contains(selected['sale_unit'])) {
+              selected['sale_unit']=compatible.first;controllers['sale_unit']!.text=compatible.first;
             }
-          });
-        },
+          }
+        });},
         validator:f.required?(v)=>(v==null||v.isEmpty)?'Campo obligatorio':null:null,
       );
     }
-    return TextFormField(
-      controller:controllers[f.key],
-      readOnly:f.readOnly,
+    return TextFormField(controller:controllers[f.key],readOnly:f.readOnly,
       keyboardType:f.numeric?const TextInputType.numberWithOptions(decimal:true):TextInputType.text,
       inputFormatters:f.numeric?[NumericThousandsFormatter()]:null,
       decoration:InputDecoration(labelText:f.label),
-      validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':(f.numeric&&number(v)<=0&&f.key!='minutes'?'Ingresá un valor mayor que cero':null):null,
-    );
+      validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':(f.numeric&&number(v)<=0&&f.key!='minutes'?'Ingresá un valor mayor que cero':null):null);
   }
-
   List<Widget> buildFields(StateSetter setD) {
     final widgets=<Widget>[];
     for(var i=0;i<fields.length;i++) {
       final f=fields[i];
-      if(f.key=='qty' && i+1<fields.length && fields[i+1].key=='unit') {
-        widgets.add(Padding(
-          padding:const EdgeInsets.only(bottom:12),
-          child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-            Expanded(child:buildField(f,setD)),
-            const SizedBox(width:12),
-            Expanded(child:buildField(fields[i+1],setD)),
-          ]),
-        ));
+      if(f.key=='qty'&&i+1<fields.length&&fields[i+1].key=='unit') {
+        widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:buildField(f,setD)),const SizedBox(width:12),Expanded(child:buildField(fields[i+1],setD))])));
         i++;
-      } else {
-        widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f,setD)));
-      }
+      } else {widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f,setD)));}
     }
     return widgets;
   }
-
   await showDialog<void>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
-    title:Text(title),
-    content:SizedBox(
-      width:400,
-      child:SingleChildScrollView(
-        child:Form(
-          key:formKey,
-          child:Column(mainAxisSize:MainAxisSize.min,children:buildFields(setD)),
-        ),
-      ),
-    ),
-    actions:[
-      if(onDelete!=null) TextButton.icon(
-        style:TextButton.styleFrom(foregroundColor:Theme.of(ctx).colorScheme.error),
-        onPressed:()async{Navigator.pop(ctx);await onDelete();},
-        icon:const Icon(Icons.delete_outline),
-        label:const Text('Eliminar receta'),
-      ),
-      TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
+    title:Text(confirmingDelete?'¿Eliminar esta receta?':title),
+    content:confirmingDelete?const Text('Esta acción no se puede deshacer. Se eliminarán también los ingredientes asociados y el historial de precios.'):SizedBox(width:400,child:SingleChildScrollView(child:Form(key:formKey,child:Column(mainAxisSize:MainAxisSize.min,children:buildFields(setD))))),
+    actions:confirmingDelete?[
+      TextButton(onPressed:()=>setD(()=>confirmingDelete=false),child:const Text('Volver')),
+      FilledButton(style:FilledButton.styleFrom(backgroundColor:Theme.of(ctx).colorScheme.error),onPressed:()async{Navigator.of(ctx).pop();if(onDelete!=null)await onDelete();},child:const Text('Sí, eliminar')),
+    ]:[
+      if(onDelete!=null)TextButton.icon(style:TextButton.styleFrom(foregroundColor:Theme.of(ctx).colorScheme.error),onPressed:()=>setD(()=>confirmingDelete=true),icon:const Icon(Icons.delete_outline),label:const Text('Eliminar receta')),
+      TextButton(onPressed:()=>Navigator.of(ctx).pop(),child:const Text('Cancelar')),
       FilledButton(onPressed:()async{
         if(!formKey.currentState!.validate())return;
-        final values={for(final e in controllers.entries)e.key:e.value.text.trim()};
-        for(final f in fields.where((x)=>x.options!=null)) {
-          final opts=optionsFor(f);
-          if(opts.isNotEmpty && !opts.contains(values[f.key])) values[f.key]=opts.first;
-        }
-        if(controllers.containsKey('yield_unit')&&controllers.containsKey('sale_unit')&&
-          unitDimension(values['yield_unit']!)!=unitDimension(values['sale_unit']!)) {
-          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));
-          return;
-        }
-        Navigator.pop(ctx);
-        await onSave(values);
+        final values={for(final e in controllers.entries)e.key:e.value.text.trim()}..addAll(selected);
+        for(final f in fields.where((x)=>x.options!=null)){final opts=optionsFor(f);if(opts.isNotEmpty&&!opts.contains(values[f.key]))values[f.key]=opts.first;}
+        if(selected.containsKey('yield_unit')&&selected.containsKey('sale_unit')&&unitDimension(values['yield_unit']!)!=unitDimension(values['sale_unit']!)){ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));return;}
+        Navigator.of(ctx).pop();await onSave(values);
       },child:const Text('Guardar')),
     ],
   )));
-  for(final c in controllers.values){c.dispose();}
+  for(final c in controllers.values)c.dispose();
 }
 
 class FormFieldSpec {
@@ -794,30 +750,10 @@ class _RecipesPageState extends State<RecipesPage> {
         widget.onChange();
       },
       onDelete:() async {
-        if(!mounted)return;
-        final yes=await showDialog<bool>(
-          context:context,
-          builder:(ctx)=>AlertDialog(
-            title:const Text('Eliminar receta'),
-            content:Text('¿Eliminar la receta "${r['name']}"? Esta acción no se puede deshacer.'),
-            actions:[
-              TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
-              FilledButton(
-                style:FilledButton.styleFrom(backgroundColor:Theme.of(ctx).colorScheme.error),
-                onPressed:()=>Navigator.pop(ctx,true),
-                child:const Text('Eliminar'),
-              ),
-            ],
-          ),
-        );
-        if(yes!=true)return;
         await Store.instance.db.delete('recipe_items',where:'recipe_id=?',whereArgs:[r['id']]);
         await Store.instance.db.delete('recipe_prices',where:'recipe_id=?',whereArgs:[r['id']]);
         await Store.instance.db.delete('recipes',where:'id=?',whereArgs:[r['id']]);
-        if(mounted) {
-          setState((){});
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Receta eliminada.')));
-        }
+        if(mounted){setState((){});ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Receta eliminada.')));}
         widget.onChange();
       },
     );
