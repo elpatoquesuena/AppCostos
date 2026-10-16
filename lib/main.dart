@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
@@ -84,6 +85,63 @@ double number(String? s) {
   else if(RegExp(r'^-?\d{1,3}(\.\d{3})+$').hasMatch(v)) v=v.replaceAll('.','');
   return double.tryParse(v)??0;
 }
+String unitDimension(String raw) {
+  final u=raw.trim().toLowerCase();
+  if(['g','gr','gramo','gramos','kg','kilo','kilos','kilogramo','kilogramos'].contains(u))return 'mass';
+  if(['ml','cc','mililitro','mililitros','l','lt','lts','litro','litros'].contains(u))return 'volume';
+  if(['unidad','unidades','u','unid'].contains(u))return 'count';
+  return 'other:$u';
+}
+
+class NumericThousandsFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final original=newValue.text;
+    final cursor=newValue.selection.isValid ? newValue.selection.extentOffset : original.length;
+    final before=original.substring(0,cursor.clamp(0,original.length).toInt());
+    final hadComma=original.contains(',');
+    String integerPart;
+    String fraction='';
+    bool hasDecimal=false;
+    if(hadComma) {
+      final pieces=original.split(',');
+      integerPart=pieces.first.replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
+      final rawFraction=pieces.skip(1).join('').replaceAll(RegExp(r'[^0-9]'), '');
+      fraction=rawFraction.substring(0,rawFraction.length.clamp(0,2).toInt());
+      hasDecimal=true;
+    } else if(RegExp(r'^\d{1,3}(\.\d{3})+\d*$').hasMatch(original)) {
+      integerPart=original.replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
+    } else if(original.contains('.')) {
+      final index=original.lastIndexOf('.');
+      integerPart=original.substring(0,index).replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
+      final rawFraction=original.substring(index+1).replaceAll(RegExp(r'[^0-9]'), '');
+      fraction=rawFraction.substring(0,rawFraction.length.clamp(0,2).toInt());
+      hasDecimal=true;
+    } else {
+      integerPart=original.replaceAll(RegExp(r'[^0-9]'), '');
+    }
+    if(integerPart.isEmpty)integerPart='0';
+    final grouped=StringBuffer();
+    for(var i=0;i<integerPart.length;i++) {
+      if(i>0&&(integerPart.length-i)%3==0)grouped.write('.');
+      grouped.write(integerPart[i]);
+    }
+    final formatted=grouped.toString()+(hasDecimal?',$fraction':'');
+    final digitsBefore=RegExp(r'\d').allMatches(before).length;
+    var newCursor=0;
+    var seen=0;
+    while(newCursor<formatted.length && seen<digitsBefore) {
+      if(RegExp(r'\d').hasMatch(formatted[newCursor]))seen++;
+      newCursor++;
+    }
+    if(before.contains(',') && hasDecimal && digitsBefore>=integerPart.length) {
+      newCursor=formatted.indexOf(',')+1+before.substring(before.indexOf(',')+1).replaceAll(RegExp(r'[^0-9]'),'').length;
+      if(newCursor>formatted.length)newCursor=formatted.length;
+    }
+    return TextEditingValue(text:formatted,selection:TextSelection.collapsed(offset:newCursor.clamp(0,formatted.length).toInt()));
+  }
+}
+
 class CostosApp extends StatelessWidget {
   const CostosApp({super.key});
   @override Widget build(BuildContext context) => MaterialApp(
@@ -228,17 +286,51 @@ class Dashboard extends StatelessWidget {
   }
 }
 
-Future<void> editDialog(BuildContext context, String title, List<FormFieldSpec> fields, Future<void> Function(Map<String,String>) onSave) async {
-  final controllers = <String,TextEditingController>{for(final f in fields) f.key:TextEditingController(text:f.initial)};
+Future<void> editDialog(
+  BuildContext context,
+  String title,
+  List<FormFieldSpec> fields,
+  Future<void> Function(Map<String,String>) onSave, {
+  Future<void> Function()? onDelete,
+}) async {
+  final controllers = <String,TextEditingController>{
+    for(final f in fields) f.key:TextEditingController(text:f.initial)
+  };
   final formKey = GlobalKey<FormState>();
 
-  Widget buildField(FormFieldSpec f) {
+  List<String> optionsFor(FormFieldSpec f) {
+    final options=f.options ?? const <String>[];
+    if(f.key=='sale_unit' && controllers.containsKey('yield_unit')) {
+      final dimension=unitDimension(controllers['yield_unit']!.text);
+      final compatible=options.where((o)=>unitDimension(o)==dimension).toList();
+      if(compatible.isNotEmpty)return compatible;
+    }
+    return options;
+  }
+
+  Widget buildField(FormFieldSpec f, StateSetter setD) {
     if (f.options != null) {
+      final options=optionsFor(f);
+      final current=controllers[f.key]!.text;
+      final value=options.contains(current)?current:(options.isEmpty?null:options.first);
       return DropdownButtonFormField<String>(
-        value:f.options!.contains(controllers[f.key]!.text)?controllers[f.key]!.text:null,
+        key:ValueKey('${f.key}:$value:${options.join(",")}'),
+        value:value,
         decoration:InputDecoration(labelText:f.label),
-        items:f.options!.map((o)=>DropdownMenuItem(value:o,child:Text(o))).toList(),
-        onChanged:f.readOnly?null:(v){if(v!=null)controllers[f.key]!.text=v;},
+        items:options.map((o)=>DropdownMenuItem(value:o,child:Text(o))).toList(),
+        onChanged:f.readOnly?null:(v){
+          if(v==null)return;
+          setD((){
+            controllers[f.key]!.text=v;
+            if(f.key=='yield_unit' && controllers.containsKey('sale_unit')) {
+              final saleOptions=fields.firstWhere((x)=>x.key=='sale_unit').options ?? const <String>[];
+              final compatible=saleOptions.where((o)=>unitDimension(o)==unitDimension(v)).toList();
+              if(compatible.isNotEmpty && !compatible.contains(controllers['sale_unit']!.text)) {
+                controllers['sale_unit']!.text=compatible.first;
+              }
+            }
+          });
+        },
         validator:f.required?(v)=>(v==null||v.isEmpty)?'Campo obligatorio':null:null,
       );
     }
@@ -246,50 +338,69 @@ Future<void> editDialog(BuildContext context, String title, List<FormFieldSpec> 
       controller:controllers[f.key],
       readOnly:f.readOnly,
       keyboardType:f.numeric?const TextInputType.numberWithOptions(decimal:true):TextInputType.text,
+      inputFormatters:f.numeric?[NumericThousandsFormatter()]:null,
       decoration:InputDecoration(labelText:f.label),
       validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':(f.numeric&&number(v)<=0&&f.key!='minutes'?'Ingresá un valor mayor que cero':null):null,
     );
   }
 
-  final List<Widget> fieldWidgets=[];
-  for(var i=0;i<fields.length;i++) {
-    final f=fields[i];
-    if(f.key=='qty' && i+1<fields.length && fields[i+1].key=='unit') {
-      fieldWidgets.add(Padding(
-        padding:const EdgeInsets.only(bottom:12),
-        child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-          Expanded(child:buildField(f)),
-          const SizedBox(width:12),
-          Expanded(child:buildField(fields[i+1])),
-        ]),
-      ));
-      i++;
-    } else {
-      fieldWidgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f)));
+  List<Widget> buildFields(StateSetter setD) {
+    final widgets=<Widget>[];
+    for(var i=0;i<fields.length;i++) {
+      final f=fields[i];
+      if(f.key=='qty' && i+1<fields.length && fields[i+1].key=='unit') {
+        widgets.add(Padding(
+          padding:const EdgeInsets.only(bottom:12),
+          child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Expanded(child:buildField(f,setD)),
+            const SizedBox(width:12),
+            Expanded(child:buildField(fields[i+1],setD)),
+          ]),
+        ));
+        i++;
+      } else {
+        widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f,setD)));
+      }
     }
+    return widgets;
   }
 
-  await showDialog<void>(context:context,builder:(ctx)=>AlertDialog(
+  await showDialog<void>(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
     title:Text(title),
     content:SizedBox(
       width:400,
       child:SingleChildScrollView(
         child:Form(
           key:formKey,
-          child:Column(mainAxisSize:MainAxisSize.min,children:fieldWidgets),
+          child:Column(mainAxisSize:MainAxisSize.min,children:buildFields(setD)),
         ),
       ),
     ),
     actions:[
+      if(onDelete!=null) TextButton.icon(
+        style:TextButton.styleFrom(foregroundColor:Theme.of(ctx).colorScheme.error),
+        onPressed:()async{Navigator.pop(ctx);await onDelete();},
+        icon:const Icon(Icons.delete_outline),
+        label:const Text('Eliminar receta'),
+      ),
       TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
       FilledButton(onPressed:()async{
         if(!formKey.currentState!.validate())return;
         final values={for(final e in controllers.entries)e.key:e.value.text.trim()};
+        for(final f in fields.where((x)=>x.options!=null)) {
+          final opts=optionsFor(f);
+          if(opts.isNotEmpty && !opts.contains(values[f.key])) values[f.key]=opts.first;
+        }
+        if(controllers.containsKey('yield_unit')&&controllers.containsKey('sale_unit')&&
+          unitDimension(values['yield_unit']!)!=unitDimension(values['sale_unit']!)) {
+          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));
+          return;
+        }
         Navigator.pop(ctx);
         await onSave(values);
       },child:const Text('Guardar')),
     ],
-  ));
+  )));
   for(final c in controllers.values){c.dispose();}
 }
 
@@ -532,7 +643,7 @@ class _RecipesPageState extends State<RecipesPage> {
           child:Align(alignment:Alignment.centerLeft,child:Text('Seleccionado: ${chosen!['name']}')),
         ),
         const SizedBox(height:12),
-        TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
+        TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada')),
         const SizedBox(height:12),
         DropdownButtonFormField<String>(
           value:unit,
@@ -592,7 +703,7 @@ class _RecipesPageState extends State<RecipesPage> {
           ),
           Align(alignment:Alignment.centerLeft,child:Text('Presentación: ${chosen!['qty']} ${chosen!['unit']} · envase: ${cash(chosen!['price'] as num)}')),
           const SizedBox(height:12),
-          TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Cantidad usada')),
+          TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada')),
           const SizedBox(height:12),
           DropdownButtonFormField<String>(
             value:['g','kg','ml','l','unidad'].contains(unit)?unit:'g',
@@ -638,7 +749,78 @@ class _RecipesPageState extends State<RecipesPage> {
   }
 
   Future<void> editRecipe(Map<String,Object?> r) async {
-    await editDialog(context,'Editar receta',[FormFieldSpec('name','Nombre',initial:r['name'] as String),FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),FormFieldSpec('minutes','Tiempo de preparación (min)',initial:fmt(r['minutes'] as num),numeric:true),FormFieldSpec('yield_qty','Cantidad que rinde',initial:fmt(r['yield_qty'] as num),numeric:true),FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true)],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);await Store.instance.db.update('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now},where:'id=?',whereArgs:[r['id']]);if(price!=(r['sale_price'] as num).toDouble())await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
+    await editDialog(
+      context,
+      'Editar receta',
+      [
+        FormFieldSpec('name','Nombre',initial:r['name'] as String),
+        FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),
+        FormFieldSpec('minutes','Tiempo de preparación (min)',initial:fmt(r['minutes'] as num),numeric:true),
+        FormFieldSpec('yield_qty','Cantidad que rinde',initial:fmt(r['yield_qty'] as num),numeric:true),
+        FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
+        FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
+        FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
+        FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
+      ],
+      (v) async {
+        final name=titleCase(v['name']??'');
+        final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=? AND id<>?',whereArgs:[name.toLowerCase(),r['id']],limit:1);
+        if(dup.isNotEmpty) {
+          if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));
+          return;
+        }
+        if(unitDimension(v['yield_unit']!)!=unitDimension(v['sale_unit']!)) {
+          if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));
+          return;
+        }
+        final now=stamp();
+        final price=number(v['sale_price']);
+        await Store.instance.db.update('recipes',{
+          'name':name,
+          'description':v['description']??'',
+          'minutes':number(v['minutes']),
+          'yield_qty':number(v['yield_qty']),
+          'yield_unit':v['yield_unit'],
+          'sale_qty':number(v['sale_qty']),
+          'sale_unit':v['sale_unit'],
+          'sale_price':price,
+          'updated':now,
+          'sale_updated':now,
+        },where:'id=?',whereArgs:[r['id']]);
+        if(price!=(r['sale_price'] as num).toDouble()) {
+          await Store.instance.db.insert('recipe_prices',{'recipe_id':r['id'],'price':price,'date':now});
+        }
+        if(mounted)setState((){});
+        widget.onChange();
+      },
+      onDelete:() async {
+        if(!mounted)return;
+        final yes=await showDialog<bool>(
+          context:context,
+          builder:(ctx)=>AlertDialog(
+            title:const Text('Eliminar receta'),
+            content:Text('¿Eliminar la receta "${r['name']}"? Esta acción no se puede deshacer.'),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
+              FilledButton(
+                style:FilledButton.styleFrom(backgroundColor:Theme.of(ctx).colorScheme.error),
+                onPressed:()=>Navigator.pop(ctx,true),
+                child:const Text('Eliminar'),
+              ),
+            ],
+          ),
+        );
+        if(yes!=true)return;
+        await Store.instance.db.delete('recipe_items',where:'recipe_id=?',whereArgs:[r['id']]);
+        await Store.instance.db.delete('recipe_prices',where:'recipe_id=?',whereArgs:[r['id']]);
+        await Store.instance.db.delete('recipes',where:'id=?',whereArgs:[r['id']]);
+        if(mounted) {
+          setState((){});
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Receta eliminada.')));
+        }
+        widget.onChange();
+      },
+    );
   }
   Future<void> editSale(Map<String,Object?> r) async {
     await editDialog(context,'Precio y presentación',[
@@ -747,7 +929,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
   Future<void> load() async {
     final rows=await Store.instance.db.query('settings');
-    for(final r in rows){if(r['key']=='hourly_rate')rate.text=r['value'] as String;if(r['key']=='ideal_margin')margin.text=r['value'] as String;}
+    for(final r in rows){if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));if(r['key']=='ideal_margin')margin.text=fmt(number(r['value'] as String));}
     if(mounted)setState(()=>ready=true);
   }
   @override void initState(){super.initState();load();}
@@ -758,8 +940,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
   @override Widget build(BuildContext context)=>!ready?const Center(child:CircularProgressIndicator()):ListView(padding:const EdgeInsets.all(20),children:[
     const Text('Configurá los valores que se usan para estimar tus costos.'),
-    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
-    const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
+    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
+    const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
     const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
     const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
   ]);
