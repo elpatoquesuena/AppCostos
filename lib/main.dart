@@ -984,7 +984,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                 query=v;
                 if(selected!=null && v.trim().toLowerCase()!=(selected!['name'] as String).toLowerCase()) {
                   selected=null;
-                  presentationController.clear();
+                  portionsController.clear();
                 }
               }),
             ),
@@ -1001,7 +1001,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                     selected=r;
                     query=r['name'] as String;
                     searchController.text=query;
-                    presentationController.clear();
+                    portionsController.clear();
                   }),
                 ),
               )),
