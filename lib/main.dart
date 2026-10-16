@@ -55,12 +55,15 @@ class Store {
   late Database db;
   Future<void> open() async {
     db = await openDatabase(path.join(await getDatabasesPath(), 'app_costos.db'),
-      version: 2,
-      onUpgrade: (d, oldVersion, newVersion) async { if(oldVersion<2) await d.execute('CREATE TABLE IF NOT EXISTS recipe_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)'); },
+      version: 3,
+      onUpgrade: (d, oldVersion, newVersion) async {
+        if(oldVersion<2) await d.execute('CREATE TABLE IF NOT EXISTS recipe_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)');
+        if(oldVersion<3) await d.execute('ALTER TABLE recipes ADD COLUMN portions_per_presentation REAL NOT NULL DEFAULT 1');
+      },
       onCreate: (d, v) async {
         await d.execute('CREATE TABLE ingredients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",qty REAL NOT NULL,unit TEXT NOT NULL,price REAL NOT NULL,updated TEXT NOT NULL)');
         await d.execute('CREATE TABLE ingredient_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,ingredient_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)');
-        await d.execute('CREATE TABLE recipes(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",minutes REAL NOT NULL DEFAULT 0,yield_qty REAL NOT NULL DEFAULT 1,yield_unit TEXT NOT NULL DEFAULT "unidad",sale_qty REAL NOT NULL DEFAULT 1,sale_unit TEXT NOT NULL DEFAULT "unidad",sale_price REAL NOT NULL DEFAULT 0,updated TEXT NOT NULL,sale_updated TEXT NOT NULL)');
+        await d.execute('CREATE TABLE recipes(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",minutes REAL NOT NULL DEFAULT 0,yield_qty REAL NOT NULL DEFAULT 1,yield_unit TEXT NOT NULL DEFAULT "unidad",sale_qty REAL NOT NULL DEFAULT 1,sale_unit TEXT NOT NULL DEFAULT "unidad",portions_per_presentation REAL NOT NULL DEFAULT 1,sale_price REAL NOT NULL DEFAULT 0,updated TEXT NOT NULL,sale_updated TEXT NOT NULL)');
         await d.execute('CREATE TABLE recipe_items(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,ingredient_id INTEGER NOT NULL,qty REAL NOT NULL,unit TEXT NOT NULL)');
         await d.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
         await d.insert('settings', {'key':'hourly_rate','value':'0'});
@@ -282,6 +285,8 @@ class Dashboard extends StatelessWidget {
             );
           },
         ),
+        const SizedBox(height: 12),
+        Card(child: InkWell(onTap: () => go(3), borderRadius: BorderRadius.circular(12), child: const Padding(padding: EdgeInsets.all(20), child: Row(children:[Icon(Icons.calculate_outlined,size:34,color:Color(0xFF245B86)),SizedBox(width:16),Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Presupuesto',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),SizedBox(height:4),Text('Calculá costos y precios según las porciones que necesitás.')])),Icon(Icons.arrow_forward,color:Color(0xFF17365D))])))),
         const SizedBox(height: 12),
         const Card(
           child: Padding(
@@ -556,8 +561,8 @@ class _RecipesPageState extends State<RecipesPage> {
   }
   Future<void> add() async {
     await editDialog(context,'Nueva receta',[
-      FormFieldSpec('name','Nombre',initial:query.trim()),const FormFieldSpec('description','Descripción',required:false),const FormFieldSpec('minutes','Tiempo de preparación (min)',numeric:true),const FormFieldSpec('yield_qty','Cantidad que rinde',numeric:true),const FormFieldSpec('yield_unit','Unidad del rendimiento',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('sale_qty','Presentación de venta',numeric:true),const FormFieldSpec('sale_unit','Unidad de presentación',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('sale_price','Precio de venta',numeric:true),
-    ],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=?',whereArgs:[name.toLowerCase()],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}if(unitDimension(v['yield_unit']!)!=unitDimension(v['sale_unit']!)){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));return;}final now=stamp();final price=number(v['sale_price']);final id=await Store.instance.db.insert('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now});await Store.instance.db.insert('recipe_prices',{'recipe_id':id,'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
+      FormFieldSpec('name','Nombre',initial:query.trim()),const FormFieldSpec('description','Descripción',required:false),const FormFieldSpec('minutes','Tiempo de preparación (min)',numeric:true),const FormFieldSpec('yield_qty','Cantidad que rinde',numeric:true),const FormFieldSpec('yield_unit','Unidad del rendimiento',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('sale_qty','Presentación de venta',numeric:true),const FormFieldSpec('sale_unit','Unidad de presentación',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('portions_per_presentation','Porciones por presentación',initial:'1',numeric:true),const FormFieldSpec('sale_price','Precio de venta',numeric:true),
+    ],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=?',whereArgs:[name.toLowerCase()],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}if(unitDimension(v['yield_unit']!)!=unitDimension(v['sale_unit']!)){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));return;}final now=stamp();final price=number(v['sale_price']);final id=await Store.instance.db.insert('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'portions_per_presentation':number(v['portions_per_presentation'])>0?number(v['portions_per_presentation']):1,'sale_price':price,'updated':now,'sale_updated':now});await Store.instance.db.insert('recipe_prices',{'recipe_id':id,'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
   }
   Future<void> addIngredient(Map<String,Object?> recipe) async {
     final ingredients=await Store.instance.db.query('ingredients',orderBy:'name COLLATE NOCASE');
@@ -738,6 +743,7 @@ class _RecipesPageState extends State<RecipesPage> {
         FormFieldSpec('yield_unit','Unidad',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
         FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
         FormFieldSpec('sale_unit','Unidad',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
+        FormFieldSpec('portions_per_presentation','Porciones por presentación',initial:fmt((r['portions_per_presentation'] as num?)??1),numeric:true),
         FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
       ],
       (v) async {
@@ -761,6 +767,7 @@ class _RecipesPageState extends State<RecipesPage> {
           'yield_unit':v['yield_unit'],
           'sale_qty':number(v['sale_qty']),
           'sale_unit':v['sale_unit'],
+          'portions_per_presentation':number(v['portions_per_presentation'])>0?number(v['portions_per_presentation']):1,
           'sale_price':price,
           'updated':now,
           'sale_updated':now,
@@ -877,7 +884,7 @@ class _RecipesPageState extends State<RecipesPage> {
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Padding(padding:const EdgeInsets.all(12),child:TextField(controller:searchController,decoration:const InputDecoration(prefixIcon:Icon(Icons.search),hintText:'Buscar o registrar receta',border:OutlineInputBorder()),onChanged:(v)=>setState(()=>query=v))),
-    Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:data,builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final list=s.data!.where((r)=>(r['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();final exact=list.any((r)=>(r['name'] as String).toLowerCase()==query.trim().toLowerCase());final canCreate=query.trim().isNotEmpty&&!exact;if(list.isEmpty&&!canCreate)return const Center(child:Text('Buscá una receta por su nombre.'));return ListView(children:[if(canCreate)Card(child:ListTile(leading:const Icon(Icons.add_circle_outline),title:Text('Registrar ${titleCase(query)}'),subtitle:const Text('Crear una receta nueva'),onTap:add)),...list.map((r)=>FutureBuilder<int>(future:Store.instance.db.query('recipe_items',where:'recipe_id=?',whereArgs:[r['id']]).then((x)=>x.length),builder:(c,count)=>Card(child:ListTile(title:Text(r['name'] as String),subtitle:(count.data??0)==0?const Text('⚠ Agregá ingredientes para calcular el costo',style:TextStyle(color:Colors.orange)):FutureBuilder<double>(future:cost(r),builder:(c,cs)=>Text('Costo: ${cs.hasData?cash(cs.data!):'…'} · Venta: ${cash(r['sale_price'] as num)}')),trailing:const Icon(Icons.chevron_right),onTap:()=>detail(r))))) ]); })),
+    Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:data,builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final list=s.data!.where((r)=>(r['name'] as String).toLowerCase().contains(query.toLowerCase())).toList();final exact=list.any((r)=>(r['name'] as String).toLowerCase()==query.trim().toLowerCase());final canCreate=query.trim().isNotEmpty&&!exact;if(list.isEmpty&&!canCreate)return const Center(child:Text('Buscá una receta por su nombre.'));return ListView(children:[if(canCreate)Card(child:ListTile(leading:const Icon(Icons.add_circle_outline),title:Text('Registrar ${titleCase(query)}'),subtitle:const Text('Crear una receta nueva'),onTap:add)),...list.map((r)=>FutureBuilder<int>(future:Store.instance.db.query('recipe_items',where:'recipe_id=?',whereArgs:[r['id']]).then((x)=>x.length),builder:(c,count)=>Card(child:ListTile(title:Text(r['name'] as String),subtitle:(count.data??0)==0?const Text('⚠ Agregá ingredientes para calcular el costo',style:TextStyle(color:Colors.orange)):FutureBuilder<double>(future:cost(r),builder:(c,cs){final yi=unitInfo(r['yield_unit'] as String);final si=unitInfo(r['sale_unit'] as String);final y=(r['yield_qty'] as num).toDouble();final compatible=yi.dimension==si.dimension&&y>0;final cst=cs.hasData&&compatible?cs.data!*(r['sale_qty'] as num).toDouble()*si.factor/(y*yi.factor):double.nan;return Text('Costo por presentación: ${cst.isFinite?cash(cst):'No disponible'} · Venta: ${cash(r['sale_price'] as num)}');}),trailing:const Icon(Icons.chevron_right),onTap:()=>detail(r))))) ]); })),
   ]);
   @override void dispose(){searchController.dispose();super.dispose();}
 }
@@ -891,7 +898,7 @@ class PresupuestoPage extends StatefulWidget {
 
 class _PresupuestoPageState extends State<PresupuestoPage> {
   final searchController = TextEditingController();
-  final presentationController = TextEditingController();
+  final portionsController = TextEditingController();
   String query = '';
   Map<String,Object?>? selected;
 
@@ -944,7 +951,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
       selected = null;
       query = '';
       searchController.clear();
-      presentationController.clear();
+      portionsController.clear();
     });
   }
 
@@ -1014,8 +1021,10 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                   final saleQty=(r['sale_qty'] as num).toDouble();
                   final compatible=yieldInfo.dimension==saleInfo.dimension && yieldQty>0;
                   final currentCost=compatible ? m.batchCost * saleQty * saleInfo.factor / (yieldQty * yieldInfo.factor) : double.nan;
-                  final newQty=number(presentationController.text);
-                  final newCost=compatible && newQty>0 ? m.batchCost * newQty * saleInfo.factor / (yieldQty * yieldInfo.factor) : double.nan;
+                  final currentPortions=((r['portions_per_presentation'] as num?)??1).toDouble();
+                  final newQty=number(portionsController.text);
+                  final currentPresentationCost=compatible ? m.batchCost * saleQty * saleInfo.factor / (yieldQty * yieldInfo.factor) : double.nan;
+                  final newCost=compatible && currentPortions>0 && newQty>0 ? currentPresentationCost * newQty / currentPortions : double.nan;
                   final canSuggest=newCost.isFinite && m.margin<100 && m.margin>=0;
                   final suggested=canSuggest ? newCost/(1-m.margin/100) : double.nan;
                   return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
@@ -1032,6 +1041,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                           Text((r['description'] as String).isEmpty?'Sin descripción':r['description'] as String),
                           const Divider(height:24),
                           _budgetInfo('Presentación actual','${fmt(saleQty)} ${r['sale_unit']}'),
+                          _budgetInfo('Porciones por presentación',fmt(currentPortions)),
                           _budgetInfo('Costo por presentación',compatible?cash(currentCost):'Unidades incompatibles'),
                           _budgetInfo('Precio de venta actual',cash(r['sale_price'] as num)),
                         ]),
@@ -1043,13 +1053,13 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                         child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                           const Text('Calcular otra presentación',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold,color:Color(0xFF17365D))),
                           const SizedBox(height:6),
-                          Text('La unidad se mantiene en ${r['sale_unit']}. El margen de contribución ideal configurado es ${fmt(m.margin)}%.'),
+                          Text('Ingresá la cantidad de porciones que necesitás. El cálculo usa ${fmt(currentPortions)} porciones por presentación y el margen ideal de ${fmt(m.margin)}%.'),
                           const SizedBox(height:12),
                           TextField(
-                            controller:presentationController,
+                            controller:portionsController,
                             keyboardType:const TextInputType.numberWithOptions(decimal:true),
                             inputFormatters:[NumericThousandsFormatter()],
-                            decoration:InputDecoration(labelText:'Nueva presentación (${r['sale_unit']})',hintText:'Ej. 250',prefixIcon:const Icon(Icons.scale_outlined,color:Color(0xFF245B86)),border:const OutlineInputBorder()),
+                            decoration:const InputDecoration(labelText:'Cantidad de porciones',hintText:'Ej. 12',prefixIcon:Icon(Icons.pie_chart_outline,color:Color(0xFF245B86)),border:OutlineInputBorder()),
                             onChanged:(_)=>setState((){}),
                           ),
                           if(newQty>0 && compatible) ...[
@@ -1060,7 +1070,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
                               child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                                 const Text('RESULTADO DEL PRESUPUESTO',style:TextStyle(fontSize:12,fontWeight:FontWeight.bold,letterSpacing:1,color:Color(0xFF245B86))),
                                 const SizedBox(height:10),
-                                _budgetInfo('Nueva presentación','${fmt(newQty)} ${r['sale_unit']}'),
+                                _budgetInfo('Porciones presupuestadas',fmt(newQty)),
                                 _budgetInfo('Costo estimado',cash(newCost)),
                                 const Divider(),
                                 Text('Precio de venta sugerido',style:TextStyle(color:Color(0xFF17365D),fontWeight:FontWeight.w600)),
@@ -1095,7 +1105,7 @@ class _PresupuestoPageState extends State<PresupuestoPage> {
 
   @override void dispose() {
     searchController.dispose();
-    presentationController.dispose();
+    portionsController.dispose();
     super.dispose();
   }
 }
@@ -1104,7 +1114,7 @@ class DataTransferService {
   static const tableColumns = <String, List<String>>{
     'ingredients': ['id','name','description','qty','unit','price','updated'],
     'ingredient_prices': ['id','ingredient_id','price','date'],
-    'recipes': ['id','name','description','minutes','yield_qty','yield_unit','sale_qty','sale_unit','sale_price','updated','sale_updated'],
+    'recipes': ['id','name','description','minutes','yield_qty','yield_unit','sale_qty','sale_unit','portions_per_presentation','sale_price','updated','sale_updated'],
     'recipe_items': ['id','recipe_id','ingredient_id','qty','unit'],
     'recipe_prices': ['id','recipe_id','price','date'],
     'settings': ['key','value'],
@@ -1156,7 +1166,7 @@ class DataTransferService {
   static Object? parseValue(String table, String column, String raw) {
     if (raw.trim().isEmpty) return null;
     const integerColumns = {'id','ingredient_id','recipe_id'};
-    const numericColumns = {'qty','price','minutes','yield_qty','sale_qty','sale_price'};
+    const numericColumns = {'qty','price','minutes','yield_qty','sale_qty','portions_per_presentation','sale_price'};
     if (integerColumns.contains(column)) {
       final value = num.tryParse(raw.trim());
       if (value == null) throw FormatException('El valor "$raw" no es válido para $column.');
@@ -1180,6 +1190,7 @@ class DataTransferService {
       if (sheet == null || sheet.rows.isEmpty) throw FormatException('Falta la hoja "$table" o está vacía.');
       final headers = sheet.rows.first.map((cell) => cellText(cell).trim()).toList();
       for (final required in columns) {
+        if (required == 'portions_per_presentation' && table == 'recipes') continue;
         if (!headers.contains(required)) throw FormatException('La hoja "$table" no contiene la columna "$required".');
       }
       final rows = <Map<String, Object?>>[];
@@ -1188,10 +1199,12 @@ class DataTransferService {
         final row = <String, Object?>{};
         for (final column in columns) {
           final index = headers.indexOf(column);
+          if (index < 0 && table == 'recipes' && column == 'portions_per_presentation') { row[column] = 1.0; continue; }
           final raw = index < cells.length ? cellText(cells[index]) : '';
           final value = parseValue(table, column, raw);
           if (value != null) row[column] = value;
         }
+        if (table == 'recipes' && ((row['portions_per_presentation'] as num?)?.toDouble() ?? 0) <= 0) row['portions_per_presentation'] = 1.0;
         rows.add(row);
       }
       parsed[table] = rows;
