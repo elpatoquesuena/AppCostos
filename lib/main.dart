@@ -162,9 +162,9 @@ class _MainPageState extends State<MainPage> {
   @override Widget build(BuildContext context) {
     final pages = [
       Dashboard(key: ValueKey('home'+revision.toString()), go: (i) => setState(() => index=i)),
-      IngredientsPage(key: ValueKey('ingredients'+revision.toString()), onChange: refresh),
-      RecipesPage(key: ValueKey('recipes'+revision.toString()), onChange: refresh),
-      SettingsPage(key: ValueKey('settings'+revision.toString())),
+      IngredientsPage(onChange: refresh),
+      RecipesPage(onChange: refresh),
+      const SettingsPage(),
     ];
     return PopScope(
       canPop: index == 0,
@@ -332,8 +332,9 @@ Future<void> editDialog(BuildContext context,String title,List<FormFieldSpec> fi
     final widgets=<Widget>[];
     for(var i=0;i<fields.length;i++) {
       final f=fields[i];
-      if(f.key=='qty'&&i+1<fields.length&&fields[i+1].key=='unit') {
-        widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(child:buildField(f,setD)),const SizedBox(width:12),Expanded(child:buildField(fields[i+1],setD))])));
+      final companionKey=f.key=='qty'?'unit':(f.key.endsWith('_qty')?'${f.key.substring(0,f.key.length-4)}_unit':null);
+      if(companionKey!=null&&i+1<fields.length&&fields[i+1].key==companionKey) {
+        widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[Expanded(flex:3,child:buildField(f,setD)),const SizedBox(width:12),Expanded(flex:2,child:buildField(fields[i+1],setD))])));
         i++;
       } else {widgets.add(Padding(padding:const EdgeInsets.only(bottom:12),child:buildField(f,setD)));}
     }
@@ -344,16 +345,25 @@ Future<void> editDialog(BuildContext context,String title,List<FormFieldSpec> fi
     content:confirmingDelete?const Text('Esta acción no se puede deshacer. Se eliminarán también los ingredientes asociados y el historial de precios.'):SizedBox(width:400,child:SingleChildScrollView(child:Form(key:formKey,child:Column(mainAxisSize:MainAxisSize.min,children:buildFields(setD))))),
     actions:confirmingDelete?[
       TextButton(onPressed:()=>setD(()=>confirmingDelete=false),child:const Text('Volver')),
-      FilledButton(style:FilledButton.styleFrom(backgroundColor:Theme.of(ctx).colorScheme.error),onPressed:()async{Navigator.of(ctx).pop();if(onDelete!=null)await onDelete();},child:const Text('Sí, eliminar')),
+      FilledButton(style:FilledButton.styleFrom(backgroundColor:Theme.of(ctx).colorScheme.error),onPressed:()async{if(onDelete!=null)await onDelete();if(ctx.mounted)Navigator.of(ctx).pop();},child:const Text('Sí, eliminar')),
     ]:[
       if(onDelete!=null)TextButton.icon(style:TextButton.styleFrom(foregroundColor:Theme.of(ctx).colorScheme.error),onPressed:()=>setD(()=>confirmingDelete=true),icon:const Icon(Icons.delete_outline),label:const Text('Eliminar receta')),
       TextButton(onPressed:()=>Navigator.of(ctx).pop(),child:const Text('Cancelar')),
       FilledButton(onPressed:()async{
         if(!formKey.currentState!.validate())return;
-        final values={for(final e in controllers.entries)e.key:e.value.text.trim()}..addAll(selected);
-        for(final f in fields.where((x)=>x.options!=null)){final opts=optionsFor(f);if(opts.isNotEmpty&&!opts.contains(values[f.key]))values[f.key]=opts.first;}
+        final values=<String,String>{};
+        for(final f in fields) {
+          if(f.options!=null) {
+            final opts=optionsFor(f);
+            final chosen=selected[f.key];
+            values[f.key]=(chosen!=null&&opts.contains(chosen))?chosen:(opts.isNotEmpty?opts.first:'');
+          } else {
+            values[f.key]=controllers[f.key]!.text.trim();
+          }
+        }
         if(selected.containsKey('yield_unit')&&selected.containsKey('sale_unit')&&unitDimension(values['yield_unit']!)!=unitDimension(values['sale_unit']!)){ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));return;}
-        Navigator.of(ctx).pop();await onSave(values);
+        await onSave(values);
+        if(ctx.mounted)Navigator.of(ctx).pop();
       },child:const Text('Guardar')),
     ],
   )));
@@ -539,7 +549,7 @@ class _RecipesPageState extends State<RecipesPage> {
   Future<void> add() async {
     await editDialog(context,'Nueva receta',[
       FormFieldSpec('name','Nombre',initial:query.trim()),const FormFieldSpec('description','Descripción',required:false),const FormFieldSpec('minutes','Tiempo de preparación (min)',numeric:true),const FormFieldSpec('yield_qty','Cantidad que rinde',numeric:true),const FormFieldSpec('yield_unit','Unidad del rendimiento',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('sale_qty','Presentación de venta',numeric:true),const FormFieldSpec('sale_unit','Unidad de presentación',options:['g','kg','ml','l','cc','unidad']),const FormFieldSpec('sale_price','Precio de venta',numeric:true),
-    ],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=?',whereArgs:[name.toLowerCase()],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}final now=stamp();final price=number(v['sale_price']);final id=await Store.instance.db.insert('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now});await Store.instance.db.insert('recipe_prices',{'recipe_id':id,'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
+    ],(v)async{final name=titleCase(v['name']??'');final dup=await Store.instance.db.query('recipes',where:'LOWER(name)=?',whereArgs:[name.toLowerCase()],limit:1);if(dup.isNotEmpty){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Ya existe una receta con ese nombre.')));return;}if(unitDimension(v['yield_unit']!)!=unitDimension(v['sale_unit']!)){if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('El rendimiento y la presentación de venta deben usar unidades compatibles.')));return;}final now=stamp();final price=number(v['sale_price']);final id=await Store.instance.db.insert('recipes',{'name':name,'description':v['description']??'','minutes':number(v['minutes']),'yield_qty':number(v['yield_qty']),'yield_unit':v['yield_unit'],'sale_qty':number(v['sale_qty']),'sale_unit':v['sale_unit'],'sale_price':price,'updated':now,'sale_updated':now});await Store.instance.db.insert('recipe_prices',{'recipe_id':id,'price':price,'date':now});if(mounted)setState((){});widget.onChange();});
   }
   Future<void> addIngredient(Map<String,Object?> recipe) async {
     final ingredients=await Store.instance.db.query('ingredients',orderBy:'name COLLATE NOCASE');
@@ -599,14 +609,16 @@ class _RecipesPageState extends State<RecipesPage> {
           child:Align(alignment:Alignment.centerLeft,child:Text('Seleccionado: ${chosen!['name']}')),
         ),
         const SizedBox(height:12),
-        TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada')),
-        const SizedBox(height:12),
-        DropdownButtonFormField<String>(
-          value:unit,
-          decoration:const InputDecoration(labelText:'Unidad utilizada'),
-          items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
-          onChanged:(v){if(v!=null)setD(()=>unit=v);},
-        ),
+        Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Expanded(flex:3,child:TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada'))),
+          const SizedBox(width:12),
+          Expanded(flex:2,child:DropdownButtonFormField<String>(
+            value:unit,
+            decoration:const InputDecoration(labelText:'Unidad'),
+            items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
+            onChanged:(v){if(v!=null)setD(()=>unit=v);},
+          )),
+        ]),
       ]))),
       actions:[
         TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
@@ -659,14 +671,16 @@ class _RecipesPageState extends State<RecipesPage> {
           ),
           Align(alignment:Alignment.centerLeft,child:Text('Presentación: ${chosen!['qty']} ${chosen!['unit']} · envase: ${cash(chosen!['price'] as num)}')),
           const SizedBox(height:12),
-          TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada')),
-          const SizedBox(height:12),
-          DropdownButtonFormField<String>(
-            value:['g','kg','ml','l','unidad'].contains(unit)?unit:'g',
-            decoration:const InputDecoration(labelText:'Unidad utilizada'),
-            items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
-            onChanged:(v){if(v!=null)setD(()=>unit=v);},
-          ),
+          Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Expanded(flex:3,child:TextField(controller:qty,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Cantidad usada'))),
+            const SizedBox(width:12),
+            Expanded(flex:2,child:DropdownButtonFormField<String>(
+              value:['g','kg','ml','l','unidad'].contains(unit)?unit:'g',
+              decoration:const InputDecoration(labelText:'Unidad'),
+              items:const ['g','kg','ml','l','unidad'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
+              onChanged:(v){if(v!=null)setD(()=>unit=v);},
+            )),
+          ]),
         ]))),
         actions:[
           TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cancelar')),
@@ -713,9 +727,9 @@ class _RecipesPageState extends State<RecipesPage> {
         FormFieldSpec('description','Descripción',initial:r['description'] as String,required:false),
         FormFieldSpec('minutes','Tiempo de preparación (min)',initial:fmt(r['minutes'] as num),numeric:true),
         FormFieldSpec('yield_qty','Cantidad que rinde',initial:fmt(r['yield_qty'] as num),numeric:true),
-        FormFieldSpec('yield_unit','Unidad del rendimiento',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
+        FormFieldSpec('yield_unit','Unidad',initial:r['yield_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
         FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
-        FormFieldSpec('sale_unit','Unidad de presentación',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
+        FormFieldSpec('sale_unit','Unidad',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
         FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
       ],
       (v) async {
