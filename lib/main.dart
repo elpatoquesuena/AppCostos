@@ -34,7 +34,7 @@ Future<void> seedSamples() async {
     else {
       final now=stamp();
       id=await db.insert('ingredients',{...s,'updated':now});
-      await db.insert('ingredient_prices',{'ingredient_id':id,'price':s['price'],'date':now});
+      await db.insert('ingredient_prices',{'ingredient_id':id,'price':baseUnitPrice(s['price'] as num,s['qty'] as num,s['unit'] as String),'date':now});
     }
     ids[s['name'] as String]=id;
   }
@@ -474,6 +474,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
       final now=stamp();
       final price=number(v['price']);
       final oldPrice=(item['price'] as num).toDouble();
+      final oldBasePrice=baseUnitPrice(oldPrice,item['qty'] as num,item['unit'] as String);
       final qty=number(v['qty']);
       if(qty<=0){
         if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('La cantidad de la presentación debe ser mayor que cero.')));
@@ -487,9 +488,10 @@ class _IngredientsPageState extends State<IngredientsPage> {
         'price':price,
         'updated':now,
       },where:'id=?',whereArgs:[item['id']]);
-      // Registrar un nuevo punto del historial solo cuando cambie el precio.
-      if(price!=oldPrice){
-        await Store.instance.db.insert('ingredient_prices',{'ingredient_id':item['id'],'price':baseUnitPrice(price,qty,v['unit']!),'date':now});
+      // El historial guarda siempre el precio por unidad base; registrar cambios de precio o presentación.
+      final newBasePrice=baseUnitPrice(price,qty,v['unit']!);
+      if(newBasePrice!=oldBasePrice){
+        await Store.instance.db.insert('ingredient_prices',{'ingredient_id':item['id'],'price':newBasePrice,'date':now});
       }
       if(mounted)setState((){});
       widget.onChange();
