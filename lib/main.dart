@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -1480,6 +1481,199 @@ class CloudSyncService {
     });
   }
 }
+
+class AutoSyncService {
+  static bool _running = false;
+  static const _tables = ['ingredients','recipes','ingredient_prices','recipe_prices','recipe_items','settings'];
+
+  static Future<void> syncNow() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || _running) return;
+    _running = true;
+    try {
+      final db = Store.instance.db;
+      await Store.instance.ensureSyncMetadata();
+      final changes = await db.query('sync_changes', where: "status='pending'", orderBy: 'queued_at');
+      final grouped = <String,List<Map<String,Object?>>>{};
+      for (final change in changes) {
+        final key = '${change['table_name']}|${change['sync_id']}';
+        grouped.putIfAbsent(key, () => []).add(change);
+      }
+      for (final events in grouped.values) {
+        await _pushGroup(user.uid, events);
+      }
+      await _pullRemote(user.uid);
+    } catch (_) {
+      // La cola local queda intacta para reintentar cuando vuelva la conexión.
+    } finally {
+      _running = false;
+    }
+  }
+
+  static Future<void> _pushGroup(String uid, List<Map<String,Object?>> events) async {
+    final db = Store.instance.db;
+    final first = events.first;
+    final last = events.last;
+    final table = first['table_name'] as String;
+    final syncId = first['sync_id'] as String;
+    final baseVersion = (first['base_version'] as num?)?.toInt() ?? 0;
+    final operation = last['operation'] as String;
+    final payload = operation == 'delete' ? null : await _readPayload(table, syncId);
+    if (operation != 'delete' && payload == null) {
+      await db.update('sync_changes', {'status':'conflict'}, where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+      return;
+    }
+    final ref = FirebaseFirestore.instance.collection('users').doc(uid).collection('records').doc('${table}__${syncId}');
+    Map<String,Object?>? remotePayload;
+    var remoteVersion = 0;
+    var accepted = false;
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final data = snap.data();
+      remoteVersion = snap.exists ? ((data?['version'] as num?)?.toInt() ?? 0) : 0;
+      remotePayload = data?['payload'] is Map ? Map<String,Object?>.from(data!['payload'] as Map) : null;
+      if (remoteVersion != baseVersion) return;
+      final nextVersion = remoteVersion + 1;
+      tx.set(ref, {
+        'table':table,
+        'syncId':syncId,
+        'version':nextVersion,
+        'deleted':operation == 'delete',
+        'payload':payload,
+        'updatedAt':FieldValue.serverTimestamp(),
+      });
+      accepted = true;
+    });
+    if (!accepted) {
+      final conflictId = const Uuid().v4();
+      final localJson = jsonEncode({'operation':operation,'payload':payload});
+      final remoteJson = jsonEncode({'deleted':remotePayload == null,'payload':remotePayload});
+      await db.insert('sync_conflicts', {
+        'id':conflictId,'table_name':table,'sync_id':syncId,
+        'local_payload':localJson,'remote_payload':remoteJson,
+        'remote_version':remoteVersion,'created_at':stamp(),
+      });
+      await FirebaseFirestore.instance.collection('users').doc(uid).collection('conflicts').doc(conflictId).set({
+        'table':table,'syncId':syncId,'localPayload':{'operation':operation,'payload':payload},
+        'remotePayload':{'deleted':remotePayload == null,'payload':remotePayload},
+        'remoteVersion':remoteVersion,'createdAt':FieldValue.serverTimestamp(),
+        'deviceProposalId':conflictId,
+      });
+      await db.update('sync_changes', {'status':'conflict'}, where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+      return;
+    }
+    final newVersion = remoteVersion + 1;
+    await db.transaction((txn) async {
+      await txn.insert('sync_state', {'key':'version:${table}:${syncId}','value':newVersion.toString()}, conflictAlgorithm:ConflictAlgorithm.replace);
+      if (table != 'settings' && operation != 'delete') {
+        await txn.update(table, {'sync_version':newVersion}, where:'sync_id=?', whereArgs:[syncId]);
+      }
+      await txn.delete('sync_changes', where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+    });
+  }
+
+  static Future<Map<String,Object?>?> _readPayload(String table, String syncId) async {
+    final db = Store.instance.db;
+    final rows = table == 'settings'
+      ? await db.query(table, where:'key=?', whereArgs:[syncId], limit:1)
+      : await db.query(table, where:'sync_id=?', whereArgs:[syncId], limit:1);
+    if (rows.isEmpty) return null;
+    final row = Map<String,Object?>.from(rows.first);
+    if (table == 'recipe_items') {
+      final recipe = await db.query('recipes', columns:['sync_id'], where:'id=?', whereArgs:[row['recipe_id']], limit:1);
+      final ingredient = await db.query('ingredients', columns:['sync_id'], where:'id=?', whereArgs:[row['ingredient_id']], limit:1);
+      if (recipe.isEmpty || ingredient.isEmpty) return null;
+      row['recipe_sync_id'] = recipe.first['sync_id'];
+      row['ingredient_sync_id'] = ingredient.first['sync_id'];
+      row.remove('recipe_id'); row.remove('ingredient_id');
+    } else if (table == 'ingredient_prices') {
+      final parent = await db.query('ingredients', columns:['sync_id'], where:'id=?', whereArgs:[row['ingredient_id']], limit:1);
+      if (parent.isEmpty) return null;
+      row['ingredient_sync_id'] = parent.first['sync_id'];
+      row.remove('ingredient_id');
+    } else if (table == 'recipe_prices') {
+      final parent = await db.query('recipes', columns:['sync_id'], where:'id=?', whereArgs:[row['recipe_id']], limit:1);
+      if (parent.isEmpty) return null;
+      row['recipe_sync_id'] = parent.first['sync_id'];
+      row.remove('recipe_id');
+    }
+    row.remove('id');
+    row.remove('sync_version');
+    return row;
+  }
+
+  static Future<int> _localVersion(String table, String syncId) async {
+    final db = Store.instance.db;
+    final state = await db.query('sync_state', columns:['value'], where:'key=?', whereArgs:['version:${table}:${syncId}'], limit:1);
+    final remembered = state.isEmpty ? 0 : int.tryParse(state.first['value'] as String? ?? '') ?? 0;
+    if (table == 'settings') return remembered;
+    final rows = await db.query(table, columns:['sync_version'], where:'sync_id=?', whereArgs:[syncId], limit:1);
+    return rows.isEmpty ? remembered : ((rows.first['sync_version'] as num?)?.toInt() ?? remembered);
+  }
+
+  static Future<void> _pullRemote(String uid) async {
+    final db = Store.instance.db;
+    final snapshot = await FirebaseFirestore.instance.collection('users').doc(uid).collection('records').get();
+    final docs = snapshot.docs.toList()
+      ..sort((a,b) => _tables.indexOf(a.data()['table'] as String).compareTo(_tables.indexOf(b.data()['table'] as String)));
+    for (final doc in docs) {
+      final data = doc.data();
+      final table = data['table'] as String?;
+      final syncId = data['syncId'] as String?;
+      if (table == null || syncId == null || !_tables.contains(table)) continue;
+      final pending = await db.query('sync_changes', columns:['id'], where:'table_name=? AND sync_id=? AND status IN (?,?)', whereArgs:[table,syncId,'pending','conflict'], limit:1);
+      if (pending.isNotEmpty) continue;
+      final remoteVersion = (data['version'] as num?)?.toInt() ?? 0;
+      if (remoteVersion <= await _localVersion(table,syncId)) continue;
+      final deleted = data['deleted'] == true;
+      final payload = data['payload'] is Map ? Map<String,Object?>.from(data['payload'] as Map) : <String,Object?>{};
+      await db.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
+      try {
+        await db.transaction((txn) async {
+          if (deleted) {
+            if (table == 'settings') {
+              await txn.delete(table, where:'key=?', whereArgs:[syncId]);
+            } else {
+              await txn.delete(table, where:'sync_id=?', whereArgs:[syncId]);
+            }
+          } else if (table == 'settings') {
+            await txn.insert(table, payload, conflictAlgorithm:ConflictAlgorithm.replace);
+          } else {
+            final row = Map<String,Object?>.from(payload);
+            row['sync_id'] = syncId;
+            row['sync_version'] = remoteVersion;
+            if (table == 'recipe_items') {
+              final recipe = await txn.query('recipes', columns:['id'], where:'sync_id=?', whereArgs:[row.remove('recipe_sync_id')], limit:1);
+              final ingredient = await txn.query('ingredients', columns:['id'], where:'sync_id=?', whereArgs:[row.remove('ingredient_sync_id')], limit:1);
+              if (recipe.isEmpty || ingredient.isEmpty) return;
+              row['recipe_id'] = recipe.first['id'];
+              row['ingredient_id'] = ingredient.first['id'];
+            } else if (table == 'ingredient_prices') {
+              final parent = await txn.query('ingredients', columns:['id'], where:'sync_id=?', whereArgs:[row.remove('ingredient_sync_id')], limit:1);
+              if (parent.isEmpty) return;
+              row['ingredient_id'] = parent.first['id'];
+            } else if (table == 'recipe_prices') {
+              final parent = await txn.query('recipes', columns:['id'], where:'sync_id=?', whereArgs:[row.remove('recipe_sync_id')], limit:1);
+              if (parent.isEmpty) return;
+              row['recipe_id'] = parent.first['id'];
+            }
+            final existing = await txn.query(table, columns:['id'], where:'sync_id=?', whereArgs:[syncId], limit:1);
+            if (existing.isEmpty) {
+              await txn.insert(table, row, conflictAlgorithm:ConflictAlgorithm.abort);
+            } else {
+              row.remove('id');
+              await txn.update(table, row, where:'sync_id=?', whereArgs:[syncId]);
+            }
+          }
+          await txn.insert('sync_state', {'key':'version:${table}:${syncId}','value':remoteVersion.toString()}, conflictAlgorithm:ConflictAlgorithm.replace);
+        });
+      } finally {
+        await db.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
+      }
+    }
+  }
+}
+
 
 class SettingsPage extends StatefulWidget { final VoidCallback onDataChanged; const SettingsPage({super.key,required this.onDataChanged}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
 class _SettingsPageState extends State<SettingsPage> {
