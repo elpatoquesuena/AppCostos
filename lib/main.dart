@@ -169,7 +169,7 @@ Future<void> _createSyncTriggers(DatabaseExecutor d) async {
     WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
     BEGIN
       INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
-      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),CAST(COALESCE((SELECT value FROM sync_state WHERE key='version:settings:'||NEW.key),'0') AS INTEGER),'pending');
     END
   ''');
   await d.execute('''
@@ -1427,14 +1427,22 @@ class DataTransferService {
   }
 
   static Future<void> importWorkbook(Map<String, List<Map<String, Object?>>> data) async {
-    await Store.instance.db.transaction((txn) async {
-      for (final table in deleteOrder) { await txn.delete(table); }
-      for (final table in importOrder) {
-        for (final row in data[table]!) {
-          await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+    final db = Store.instance.db;
+    await db.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
+    try {
+      await db.transaction((txn) async {
+        await txn.delete('sync_changes');
+        for (final table in deleteOrder) { await txn.delete(table); }
+        for (final table in importOrder) {
+          for (final row in data[table]!) {
+            await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
         }
-      }
-    });
+      });
+      await Store.instance.ensureSyncMetadata();
+    } finally {
+      await db.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
+    }
   }
 }
 
@@ -1487,16 +1495,24 @@ class CloudSyncService {
     for (final row in data['recipe_prices']!) {
       if (!recipeIds.contains(row['recipe_id'])) throw Exception('La copia contiene un historial de receta inválido.');
     }
-    await Store.instance.db.transaction((txn) async {
-      for (final table in DataTransferService.deleteOrder) {
-        await txn.delete(table);
-      }
-      for (final table in DataTransferService.importOrder) {
-        for (final row in data[table]!) {
-          await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+    final db = Store.instance.db;
+    await db.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
+    try {
+      await db.transaction((txn) async {
+        await txn.delete('sync_changes');
+        for (final table in DataTransferService.deleteOrder) {
+          await txn.delete(table);
         }
-      }
-    });
+        for (final table in DataTransferService.importOrder) {
+          for (final row in data[table]!) {
+            await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+        }
+      });
+      await Store.instance.ensureSyncMetadata();
+    } finally {
+      await db.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
+    }
   }
 }
 
