@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
@@ -190,7 +191,7 @@ class CostosApp extends StatelessWidget {
   @override Widget build(BuildContext context) => MaterialApp(
     title: 'Costeapp', debugShowCheckedModeBanner: false,
     theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF17365D)), scaffoldBackgroundColor: const Color(0xFFF7F8FA), appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF17365D), foregroundColor: Colors.white, elevation: 0), cardTheme: const CardThemeData(color: Colors.white, elevation: 1, margin: EdgeInsets.symmetric(vertical: 6)), filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: const Color(0xFF17365D), foregroundColor: Colors.white))),
-    home: const MainPage(),
+    home: const AuthGate(),
   );
 }
 
@@ -1416,4 +1417,197 @@ class _SettingsPageState extends State<SettingsPage> {
     const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
   ]);
   @override void dispose(){rate.dispose();margin.dispose();super.dispose();}
+}
+
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: Scaffold(body: Center(child: CircularProgressIndicator())),
+          );
+        }
+        if (snapshot.data != null) return const CostosHomeWithAccount();
+        return const AccountAccessPage();
+      },
+    );
+  }
+}
+
+class CostosHomeWithAccount extends StatelessWidget {
+  const CostosHomeWithAccount({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Costeapp',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF17365D)),
+        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
+        appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF17365D), foregroundColor: Colors.white, elevation: 0),
+        cardTheme: const CardThemeData(color: Colors.white, elevation: 1, margin: EdgeInsets.symmetric(vertical: 6)),
+        filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: const Color(0xFF17365D), foregroundColor: Colors.white)),
+      ),
+      home: const MainPage(),
+    );
+  }
+}
+
+class AccountAccessPage extends StatefulWidget {
+  const AccountAccessPage({super.key});
+
+  @override
+  State<AccountAccessPage> createState() => _AccountAccessPageState();
+}
+
+class _AccountAccessPageState extends State<AccountAccessPage> {
+  final email = TextEditingController();
+  final password = TextEditingController();
+  bool createAccount = false;
+  bool busy = false;
+  bool obscure = true;
+  String? error;
+
+  String friendlyError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'invalid-email': return 'El correo electrónico no tiene un formato válido.';
+      case 'user-not-found':
+      case 'wrong-password':
+      case 'invalid-credential': return 'El correo o la contraseña son incorrectos.';
+      case 'email-already-in-use': return 'Ya existe una cuenta con ese correo. Iniciá sesión.';
+      case 'weak-password': return 'La contraseña debe tener al menos 6 caracteres.';
+      case 'network-request-failed': return 'No hay conexión a internet. Revisá la conexión e intentá de nuevo.';
+      case 'too-many-requests': return 'Hubo demasiados intentos. Esperá un momento y probá de nuevo.';
+      case 'operation-not-allowed': return 'El acceso por correo y contraseña no está habilitado en Firebase.';
+      default: return e.message ?? 'No se pudo completar la operación.';
+    }
+  }
+
+  Future<void> submit() async {
+    FocusScope.of(context).unfocus();
+    final mail = email.text.trim();
+    final pass = password.text;
+    if (mail.isEmpty || pass.isEmpty) {
+      setState(() => error = 'Ingresá tu correo y contraseña.');
+      return;
+    }
+    if (createAccount && pass.length < 6) {
+      setState(() => error = 'La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    setState(() { busy = true; error = null; });
+    try {
+      if (createAccount) {
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(email: mail, password: pass);
+      } else {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(email: mail, password: pass);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() => error = friendlyError(e));
+    } catch (_) {
+      if (mounted) setState(() => error = 'Ocurrió un error. Revisá tu conexión e intentá nuevamente.');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Costeapp',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF17365D)),
+        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
+        appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF17365D), foregroundColor: Colors.white, elevation: 0),
+        filledButtonTheme: FilledButtonThemeData(style: FilledButton.styleFrom(backgroundColor: const Color(0xFF17365D), foregroundColor: Colors.white)),
+      ),
+      home: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(color: const Color(0xFFE7EEF7), borderRadius: BorderRadius.circular(18)),
+                      child: const Icon(Icons.bakery_dining_outlined, size: 48, color: Color(0xFF17365D)),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text('Costeapp', textAlign: TextAlign.center, style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Color(0xFF17365D))),
+                    const SizedBox(height: 8),
+                    Text(createAccount ? 'Creá tu cuenta para preparar la sincronización entre tus dispositivos.' : 'Ingresá a tu cuenta para continuar.', textAlign: TextAlign.center),
+                    const SizedBox(height: 28),
+                    TextField(
+                      controller: email,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
+                      decoration: const InputDecoration(labelText: 'Correo electrónico', prefixIcon: Icon(Icons.email_outlined), border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: password,
+                      obscureText: obscure,
+                      autofillHints: [createAccount ? AutofillHints.newPassword : AutofillHints.password],
+                      onSubmitted: (_) => busy ? null : submit(),
+                      decoration: InputDecoration(
+                        labelText: 'Contraseña',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          onPressed: () => setState(() => obscure = !obscure),
+                          icon: Icon(obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                        ),
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 14),
+                      Text(error!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: busy ? null : submit,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: busy
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : Text(createAccount ? 'Crear cuenta' : 'Iniciar sesión'),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: busy ? null : () => setState(() { createAccount = !createAccount; error = null; }),
+                      child: Text(createAccount ? 'Ya tengo una cuenta · Iniciar sesión' : 'No tengo cuenta · Crear cuenta'),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Tus datos guardados en este teléfono no se borran por crear una cuenta.', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xFF5D6B7A))),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    email.dispose();
+    password.dispose();
+    super.dispose();
+  }
 }
