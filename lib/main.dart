@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
@@ -1322,6 +1323,68 @@ class DataTransferService {
   }
 }
 
+
+class CloudSyncService {
+  static Future<void> uploadThisDevice() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('Iniciá sesión antes de sincronizar.');
+    final db = Store.instance.db;
+    final tables = <String, List<Map<String, Object?>>>{};
+    for (final table in DataTransferService.tableColumns.keys) {
+      tables[table] = await db.query(table, orderBy: table == 'settings' ? 'key' : 'id');
+    }
+    await FirebaseFirestore.instance
+        .collection('users').doc(user.uid).collection('appData').doc('current')
+        .set({
+          'formatVersion': 1,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'tables': tables,
+        });
+  }
+
+  static Future<void> restoreFromCloud() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('Iniciá sesión antes de sincronizar.');
+    final snap = await FirebaseFirestore.instance
+        .collection('users').doc(user.uid).collection('appData').doc('current').get();
+    if (!snap.exists) throw Exception('Todavía no hay una copia en la nube. Primero subí los datos desde el teléfono que tiene la información correcta.');
+    final rawTables = snap.data()?['tables'];
+    if (rawTables is! Map) throw Exception('La copia en la nube no tiene un formato válido.');
+    final data = <String, List<Map<String, Object?>>>{};
+    for (final table in DataTransferService.tableColumns.keys) {
+      final rows = rawTables[table];
+      if (rows is! List) throw Exception('La copia en la nube está incompleta ($table). No se modificaron los datos de este teléfono.');
+      data[table] = rows.map((row) {
+        if (row is! Map) throw Exception('La copia en la nube contiene una fila inválida.');
+        return Map<String, Object?>.from(row);
+      }).toList();
+    }
+    final ingredientIds = data['ingredients']!.map((r) => r['id']).toSet();
+    final recipeIds = data['recipes']!.map((r) => r['id']).toSet();
+    for (final row in data['recipe_items']!) {
+      if (!ingredientIds.contains(row['ingredient_id']) || !recipeIds.contains(row['recipe_id'])) {
+        throw Exception('La copia contiene referencias inválidas. No se modificaron los datos de este teléfono.');
+      }
+    }
+    for (final row in data['ingredient_prices']!) {
+      if (!ingredientIds.contains(row['ingredient_id'])) throw Exception('La copia contiene un historial de insumo inválido.');
+    }
+    for (final row in data['recipe_prices']!) {
+      if (!recipeIds.contains(row['recipe_id'])) throw Exception('La copia contiene un historial de receta inválido.');
+    }
+    await Store.instance.db.transaction((txn) async {
+      for (final table in DataTransferService.deleteOrder) {
+        await txn.delete(table);
+      }
+      for (final table in DataTransferService.importOrder) {
+        for (final row in data[table]!) {
+          await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
+  }
+}
+
 class SettingsPage extends StatefulWidget { final VoidCallback onDataChanged; const SettingsPage({super.key,required this.onDataChanged}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
 class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
@@ -1414,6 +1477,50 @@ class _SettingsPageState extends State<SettingsPage> {
     OutlinedButton.icon(onPressed:exportData,icon:const Icon(Icons.file_download_outlined),label:const Text('Exportar toda la información a Excel')),
     const SizedBox(height:8),
     OutlinedButton.icon(onPressed:importData,icon:const Icon(Icons.file_upload_outlined),label:const Text('Importar Excel de otro dispositivo')),
+    const SizedBox(height:28),
+    const Text('Sincronización entre tus dispositivos',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+    const SizedBox(height:8),
+    const Text('Subí una copia de los datos de este teléfono a tu cuenta o restaurá la copia guardada en la nube en otro teléfono. Restaurar reemplaza los datos locales; subí primero cualquier cambio que quieras conservar.'),
+    const SizedBox(height:12),
+    OutlinedButton.icon(
+      onPressed: () async {
+        try {
+          await CloudSyncService.uploadThisDevice();
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Datos de este teléfono guardados en la nube.')));
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se pudo subir la copia: $e')));
+        }
+      },
+      icon:const Icon(Icons.cloud_upload_outlined),
+      label:const Text('Subir datos de este teléfono'),
+    ),
+    const SizedBox(height:8),
+    OutlinedButton.icon(
+      onPressed: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title:const Text('Restaurar datos desde la nube'),
+            content:const Text('Esto reemplazará los insumos, recetas, historiales y parámetros de este teléfono por la copia de tu cuenta. Si hay datos locales nuevos que no subiste, se perderán. ¿Querés continuar?'),
+            actions:[
+              TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
+              FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Restaurar copia')),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        try {
+          await CloudSyncService.restoreFromCloud();
+          await load();
+          widget.onDataChanged();
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Datos restaurados desde la nube.')));
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se pudo restaurar la copia: $e')));
+        }
+      },
+      icon:const Icon(Icons.cloud_download_outlined),
+      label:const Text('Restaurar datos desde la nube'),
+    ),
     const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
   ]);
   @override void dispose(){rate.dispose();margin.dispose();super.dispose();}
