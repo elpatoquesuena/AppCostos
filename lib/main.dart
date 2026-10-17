@@ -300,7 +300,15 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int index = 0;
   int revision = 0;
-  void refresh() => setState(() => revision++);
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => AutoSyncService.syncNow());
+  }
+  void refresh() {
+    setState(() => revision++);
+    AutoSyncService.syncNow();
+  }
   @override Widget build(BuildContext context) {
     final pages = [
       Dashboard(key: ValueKey('home'+revision.toString()), go: (i) => setState(() => index=i)),
@@ -1564,11 +1572,13 @@ class AutoSyncService {
     }
     final newVersion = remoteVersion + 1;
     await db.transaction((txn) async {
+      await txn.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
       await txn.insert('sync_state', {'key':'version:${table}:${syncId}','value':newVersion.toString()}, conflictAlgorithm:ConflictAlgorithm.replace);
       if (table != 'settings' && operation != 'delete') {
         await txn.update(table, {'sync_version':newVersion}, where:'sync_id=?', whereArgs:[syncId]);
       }
       await txn.delete('sync_changes', where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+      await txn.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
     });
   }
 
