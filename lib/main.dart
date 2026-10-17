@@ -10,6 +10,7 @@ import 'package:excel/excel.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:uuid/uuid.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +25,7 @@ Future<void> main() async {
   );
   await Store.instance.open();
   await seedSamples();
+  await Store.instance.ensureSyncMetadata();
   runApp(const CostosApp());
 }
 
@@ -67,7 +69,7 @@ class Store {
   late Database db;
   Future<void> open() async {
     db = await openDatabase(path.join(await getDatabasesPath(), 'app_costos.db'),
-      version: 4,
+      version: 5,
       onUpgrade: (d, oldVersion, newVersion) async {
         if(oldVersion<2) await d.execute('CREATE TABLE IF NOT EXISTS recipe_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)');
         if(oldVersion<3) await d.execute('ALTER TABLE recipes ADD COLUMN portions_per_presentation REAL NOT NULL DEFAULT 1');
@@ -81,17 +83,47 @@ class Store {
             await d.rawUpdate('UPDATE ingredient_prices SET price=price*?/? WHERE ingredient_id=?',[factor,qty,ingredient['id']]);
           }
         }
+        if(oldVersion<5) {
+          for(final table in const ['ingredients','ingredient_prices','recipes','recipe_items','recipe_prices']) {
+            await d.execute('ALTER TABLE $table ADD COLUMN sync_id TEXT');
+            await d.execute('ALTER TABLE $table ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 0');
+          }
+          await _createSyncTables(d);
+          await _populateSyncIds(d);
+        }
       },
       onCreate: (d, v) async {
-        await d.execute('CREATE TABLE ingredients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",qty REAL NOT NULL,unit TEXT NOT NULL,price REAL NOT NULL,updated TEXT NOT NULL)');
-        await d.execute('CREATE TABLE ingredient_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,ingredient_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)');
-        await d.execute('CREATE TABLE recipes(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",minutes REAL NOT NULL DEFAULT 0,yield_qty REAL NOT NULL DEFAULT 1,yield_unit TEXT NOT NULL DEFAULT "unidad",sale_qty REAL NOT NULL DEFAULT 1,sale_unit TEXT NOT NULL DEFAULT "unidad",portions_per_presentation REAL NOT NULL DEFAULT 1,sale_price REAL NOT NULL DEFAULT 0,updated TEXT NOT NULL,sale_updated TEXT NOT NULL)');
-        await d.execute('CREATE TABLE recipe_items(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,ingredient_id INTEGER NOT NULL,qty REAL NOT NULL,unit TEXT NOT NULL)');
+        await d.execute('CREATE TABLE ingredients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",qty REAL NOT NULL,unit TEXT NOT NULL,price REAL NOT NULL,updated TEXT NOT NULL,sync_id TEXT,sync_version INTEGER NOT NULL DEFAULT 0)');
+        await d.execute('CREATE TABLE ingredient_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,ingredient_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL,sync_id TEXT,sync_version INTEGER NOT NULL DEFAULT 0)');
+        await d.execute('CREATE TABLE recipes(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT "",minutes REAL NOT NULL DEFAULT 0,yield_qty REAL NOT NULL DEFAULT 1,yield_unit TEXT NOT NULL DEFAULT "unidad",sale_qty REAL NOT NULL DEFAULT 1,sale_unit TEXT NOT NULL DEFAULT "unidad",portions_per_presentation REAL NOT NULL DEFAULT 1,sale_price REAL NOT NULL DEFAULT 0,updated TEXT NOT NULL,sale_updated TEXT NOT NULL,sync_id TEXT,sync_version INTEGER NOT NULL DEFAULT 0)');
+        await d.execute('CREATE TABLE recipe_items(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,ingredient_id INTEGER NOT NULL,qty REAL NOT NULL,unit TEXT NOT NULL,sync_id TEXT,sync_version INTEGER NOT NULL DEFAULT 0)');
         await d.execute('CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
         await d.insert('settings', {'key':'hourly_rate','value':'0'});
         await d.insert('settings', {'key':'ideal_margin','value':'60'});
-        await d.execute('CREATE TABLE recipe_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL)');
+        await d.execute('CREATE TABLE recipe_prices(id INTEGER PRIMARY KEY AUTOINCREMENT,recipe_id INTEGER NOT NULL,price REAL NOT NULL,date TEXT NOT NULL,sync_id TEXT,sync_version INTEGER NOT NULL DEFAULT 0)');
+        await _createSyncTables(d);
       });
+  }
+
+  Future<void> ensureSyncMetadata() async {
+    await _populateSyncIds(db);
+  }
+}
+
+Future<void> _createSyncTables(DatabaseExecutor d) async {
+  await d.execute('CREATE TABLE IF NOT EXISTS sync_changes(id TEXT PRIMARY KEY,table_name TEXT NOT NULL,sync_id TEXT NOT NULL,local_id INTEGER,operation TEXT NOT NULL,queued_at TEXT NOT NULL,base_version INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT \'pending\')');
+  await d.execute('CREATE INDEX IF NOT EXISTS idx_sync_changes_status ON sync_changes(status,queued_at)');
+  await d.execute('CREATE TABLE IF NOT EXISTS sync_conflicts(id TEXT PRIMARY KEY,table_name TEXT NOT NULL,sync_id TEXT NOT NULL,local_payload TEXT NOT NULL,remote_payload TEXT NOT NULL,remote_version INTEGER NOT NULL,created_at TEXT NOT NULL,resolution TEXT)');
+  await d.execute('CREATE TABLE IF NOT EXISTS sync_state(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
+}
+
+Future<void> _populateSyncIds(DatabaseExecutor d) async {
+  const uuid = Uuid();
+  for (final table in const ['ingredients','ingredient_prices','recipes','recipe_items','recipe_prices']) {
+    final rows = await d.query(table, columns: ['id','sync_id'], where: 'sync_id IS NULL OR sync_id = ?', whereArgs: ['']);
+    for (final row in rows) {
+      await d.update(table, {'sync_id': uuid.v4()}, where: 'id = ?', whereArgs: [row['id']]);
+    }
   }
 }
 
