@@ -297,13 +297,23 @@ class MainPage extends StatefulWidget {
   const MainPage({super.key});
   @override State<MainPage> createState() => _MainPageState();
 }
-class _MainPageState extends State<MainPage> {
+class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   int index = 0;
   int revision = 0;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => AutoSyncService.syncNow());
+  }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) AutoSyncService.syncNow();
+  }
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
   void refresh() {
     setState(() => revision++);
@@ -1501,7 +1511,7 @@ class AutoSyncService {
     try {
       final db = Store.instance.db;
       await Store.instance.ensureSyncMetadata();
-      final changes = await db.query('sync_changes', where: "status='pending'", orderBy: 'queued_at');
+      final changes = await db.query('sync_changes', where: "status='pending'", orderBy: 'queued_at, rowid');
       final grouped = <String,List<Map<String,Object?>>>{};
       for (final change in changes) {
         final key = '${change['table_name']}|${change['sync_id']}';
@@ -1618,7 +1628,8 @@ class AutoSyncService {
     final remembered = state.isEmpty ? 0 : int.tryParse(state.first['value'] as String? ?? '') ?? 0;
     if (table == 'settings') return remembered;
     final rows = await db.query(table, columns:['sync_version'], where:'sync_id=?', whereArgs:[syncId], limit:1);
-    return rows.isEmpty ? remembered : ((rows.first['sync_version'] as num?)?.toInt() ?? remembered);
+    final rowVersion = rows.isEmpty ? 0 : ((rows.first['sync_version'] as num?)?.toInt() ?? 0);
+    return rowVersion > remembered ? rowVersion : remembered;
   }
 
   static Future<void> _pullRemote(String uid) async {
