@@ -1432,6 +1432,7 @@ class DataTransferService {
     try {
       await db.transaction((txn) async {
         await txn.delete('sync_changes');
+        await txn.delete('sync_state', where:"key LIKE 'version:%'");
         for (final table in deleteOrder) { await txn.delete(table); }
         for (final table in importOrder) {
           for (final row in data[table]!) {
@@ -1500,6 +1501,7 @@ class CloudSyncService {
     try {
       await db.transaction((txn) async {
         await txn.delete('sync_changes');
+        await txn.delete('sync_state', where:"key LIKE 'version:%'");
         for (final table in DataTransferService.deleteOrder) {
           await txn.delete(table);
         }
