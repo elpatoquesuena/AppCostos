@@ -1523,9 +1523,11 @@ class AutoSyncService {
   static Future<void> syncNow() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || _running) return;
+    final db = Store.instance.db;
+    final enabledRows = await db.query('sync_state', columns:['value'], where:'key=?', whereArgs:['sync_enabled'], limit:1);
+    if (enabledRows.isEmpty || enabledRows.first['value'] != '1') return;
     _running = true;
     try {
-      final db = Store.instance.db;
       await Store.instance.ensureSyncMetadata();
       await _pullRemote(user.uid);
       await _enqueueUntracked(db);
@@ -1783,11 +1785,14 @@ class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
   String? lastRateUpdate;
   int conflictCount = 0;
+  bool syncEnabled = false;
   Future<void> load() async {
     lastRateUpdate=null;
     final rows=await Store.instance.db.query('settings');
     final conflicts=await Store.instance.db.query('sync_conflicts',columns:['id'],where:'resolution IS NULL');
+    final syncRows=await Store.instance.db.query('sync_state',columns:['value'],where:'key=?',whereArgs:['sync_enabled'],limit:1);
     conflictCount=conflicts.length;
+    syncEnabled=syncRows.isNotEmpty && syncRows.first['value']=='1';
     for(final r in rows){
       if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));
       if(r['key']=='ideal_margin')margin.text=fmt(number(r['value'] as String));
@@ -1816,6 +1821,28 @@ class _SettingsPageState extends State<SettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
     }
   }
+  Future<void> setSyncEnabled(bool enabled) async {
+    final db = Store.instance.db;
+    if (enabled && !syncEnabled) {
+      final confirmed = await showDialog<bool>(
+        context:context,
+        builder:(ctx)=>AlertDialog(
+          title:const Text('Preparar la sincronización'),
+          content:const Text('Antes de activar por primera vez: en el teléfono que tiene los datos correctos, subí una copia a la nube. En cada teléfono adicional, restaurá esa copia antes de activar la sincronización. Así se conservan los identificadores y se evitan duplicados. ¿Querés activar la sincronización automática ahora?'),
+          actions:[
+            TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Todavía no')),
+            FilledButton(onPressed:()=>Navigator.pop(ctx,true),child:const Text('Activar')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await db.insert('sync_state', {'key':'sync_enabled','value':enabled?'1':'0'}, conflictAlgorithm:ConflictAlgorithm.replace);
+    await load();
+    if (enabled) await AutoSyncService.syncNow();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(enabled?'Sincronización automática activada.':'Sincronización automática pausada.')));
+  }
+
   Future<void> reviewConflicts() async {
     final db = Store.instance.db;
     final conflicts = await db.query('sync_conflicts', where:'resolution IS NULL', orderBy:'created_at DESC');
@@ -1947,6 +1974,14 @@ class _SettingsPageState extends State<SettingsPage> {
     OutlinedButton.icon(onPressed:importData,icon:const Icon(Icons.file_upload_outlined),label:const Text('Importar Excel de otro dispositivo')),
     const SizedBox(height:28),
     const Text('Sincronización entre tus dispositivos',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+    const SizedBox(height:8),
+    Card(child:ListTile(
+      leading:Icon(syncEnabled?Icons.cloud_done_outlined:Icons.cloud_off_outlined),
+      title:Text(syncEnabled?'Sincronización automática activa':'Sincronización automática pausada'),
+      subtitle:Text(syncEnabled?'Los cambios se sincronizan al guardar y al volver a abrir la aplicación.':'Activala después de preparar el respaldo inicial en todos los teléfonos.'),
+      trailing:const Icon(Icons.chevron_right),
+      onTap:()=>setSyncEnabled(!syncEnabled),
+    )),
     const SizedBox(height:8),
     if(conflictCount>0) Card(
       child:ListTile(
