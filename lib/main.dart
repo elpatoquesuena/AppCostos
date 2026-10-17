@@ -1279,6 +1279,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
   String? lastRateUpdate;
   Future<void> load() async {
+    lastRateUpdate=null;
     final rows=await Store.instance.db.query('settings');
     for(final r in rows){
       if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));
