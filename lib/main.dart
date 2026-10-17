@@ -161,7 +161,7 @@ Future<void> _createSyncTriggers(DatabaseExecutor d) async {
     WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
     BEGIN
       INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
-      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),CAST(COALESCE((SELECT value FROM sync_state WHERE key='version:settings:'||NEW.key),'0') AS INTEGER),'pending');
     END
   ''');
   await d.execute('''
@@ -177,7 +177,7 @@ Future<void> _createSyncTriggers(DatabaseExecutor d) async {
     WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
     BEGIN
       INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
-      VALUES(lower(hex(randomblob(16))),'settings',OLD.key,NULL,'delete',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+      VALUES(lower(hex(randomblob(16))),'settings',OLD.key,NULL,'delete',strftime('%Y-%m-%dT%H:%M:%fZ','now'),CAST(COALESCE((SELECT value FROM sync_state WHERE key='version:settings:'||OLD.key),'0') AS INTEGER),'pending');
     END
   ''');
 }
