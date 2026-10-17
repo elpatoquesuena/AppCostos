@@ -115,6 +115,70 @@ Future<void> _createSyncTables(DatabaseExecutor d) async {
   await d.execute('CREATE INDEX IF NOT EXISTS idx_sync_changes_status ON sync_changes(status,queued_at)');
   await d.execute('CREATE TABLE IF NOT EXISTS sync_conflicts(id TEXT PRIMARY KEY,table_name TEXT NOT NULL,sync_id TEXT NOT NULL,local_payload TEXT NOT NULL,remote_payload TEXT NOT NULL,remote_version INTEGER NOT NULL,created_at TEXT NOT NULL,resolution TEXT)');
   await d.execute('CREATE TABLE IF NOT EXISTS sync_state(key TEXT PRIMARY KEY,value TEXT NOT NULL)');
+  await _createSyncTriggers(d);
+}
+
+Future<void> _createSyncTriggers(DatabaseExecutor d) async {
+  const tables = ['ingredients','ingredient_prices','recipes','recipe_items','recipe_prices'];
+  for (final table in tables) {
+    await d.execute('''
+      CREATE TRIGGER IF NOT EXISTS sync_${table}_insert
+      AFTER INSERT ON ${table}
+      WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+      BEGIN
+        UPDATE ${table} SET sync_id=lower(hex(randomblob(16)))
+          WHERE id=NEW.id AND (sync_id IS NULL OR sync_id='');
+        INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+          SELECT lower(hex(randomblob(16))), '${table}', sync_id, id, 'upsert',
+                 strftime('%Y-%m-%dT%H:%M:%fZ','now'), sync_version, 'pending'
+          FROM ${table} WHERE id=NEW.id;
+      END
+    ''');
+    await d.execute('''
+      CREATE TRIGGER IF NOT EXISTS sync_${table}_update
+      AFTER UPDATE ON ${table}
+      WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+      BEGIN
+        INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+          VALUES(lower(hex(randomblob(16))), '${table}', NEW.sync_id, NEW.id, 'upsert',
+                 strftime('%Y-%m-%dT%H:%M:%fZ','now'), OLD.sync_version, 'pending');
+      END
+    ''');
+    await d.execute('''
+      CREATE TRIGGER IF NOT EXISTS sync_${table}_delete
+      AFTER DELETE ON ${table}
+      WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+      BEGIN
+        INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+          VALUES(lower(hex(randomblob(16))), '${table}', OLD.sync_id, OLD.id, 'delete',
+                 strftime('%Y-%m-%dT%H:%M:%fZ','now'), OLD.sync_version, 'pending');
+      END
+    ''');
+  }
+  await d.execute('''
+    CREATE TRIGGER IF NOT EXISTS sync_settings_insert AFTER INSERT ON settings
+    WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+    BEGIN
+      INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+    END
+  ''');
+  await d.execute('''
+    CREATE TRIGGER IF NOT EXISTS sync_settings_update AFTER UPDATE ON settings
+    WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+    BEGIN
+      INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+      VALUES(lower(hex(randomblob(16))),'settings',NEW.key,NULL,'upsert',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+    END
+  ''');
+  await d.execute('''
+    CREATE TRIGGER IF NOT EXISTS sync_settings_delete AFTER DELETE ON settings
+    WHEN COALESCE((SELECT value FROM sync_state WHERE key='applying_remote'),'0') <> '1'
+    BEGIN
+      INSERT INTO sync_changes(id,table_name,sync_id,local_id,operation,queued_at,base_version,status)
+      VALUES(lower(hex(randomblob(16))),'settings',OLD.key,NULL,'delete',strftime('%Y-%m-%dT%H:%M:%fZ','now'),0,'pending');
+    END
+  ''');
 }
 
 Future<void> _populateSyncIds(DatabaseExecutor d) async {
