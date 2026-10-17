@@ -1586,6 +1586,18 @@ class AutoSyncService {
     return jsonEncode(_canonicalValue(a)) == jsonEncode(_canonicalValue(b));
   }
 
+  static Future<void> _finishQueueBatch(Transaction txn, String table, String syncId, List<Map<String,Object?>> events, int version) async {
+    final ids = events.map((event) => event['id'] as String).toList();
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await txn.delete('sync_changes', where:'id IN (${placeholders})', whereArgs:ids);
+    await txn.update(
+      'sync_changes',
+      {'base_version':version},
+      where:"table_name=? AND sync_id=? AND status='pending' AND id NOT IN (${placeholders})",
+      whereArgs:[table,syncId,...ids],
+    );
+  }
+
   static Future<void> _pushGroup(String uid, List<Map<String,Object?>> events) async {
     final db = Store.instance.db;
     final first = events.first;
@@ -1627,7 +1639,7 @@ class AutoSyncService {
         if (table != 'settings') {
           await txn.update(table, {'sync_version':remoteVersion}, where:'sync_id=?', whereArgs:[syncId]);
         }
-        await txn.delete('sync_changes', where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+        await _finishQueueBatch(txn, table, syncId, events, remoteVersion);
         await txn.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
       });
       return;
@@ -1657,7 +1669,7 @@ class AutoSyncService {
       if (table != 'settings' && operation != 'delete') {
         await txn.update(table, {'sync_version':newVersion}, where:'sync_id=?', whereArgs:[syncId]);
       }
-      await txn.delete('sync_changes', where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+      await _finishQueueBatch(txn, table, syncId, events, newVersion);
       await txn.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
     });
   }
