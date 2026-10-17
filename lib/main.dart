@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
@@ -10,6 +11,15 @@ import 'package:share_plus/share_plus.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: const FirebaseOptions(
+      apiKey: 'AIzaSyBu0cWHgePdi9YMVRY7ASpKjF2mcSC17Zw',
+      appId: '1:1018507870415:android:d9d9e19c925fab97e6b7ba',
+      messagingSenderId: '1018507870415',
+      projectId: 'costeappbase',
+      storageBucket: 'costeappbase.firebasestorage.app',
+    ),
+  );
   await Store.instance.open();
   await seedSamples();
   runApp(const CostosApp());
