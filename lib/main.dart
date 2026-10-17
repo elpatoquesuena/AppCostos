@@ -1527,6 +1527,7 @@ class AutoSyncService {
     try {
       final db = Store.instance.db;
       await Store.instance.ensureSyncMetadata();
+      await _enqueueUntracked(db);
       final changes = await db.query('sync_changes', where: "status='pending'", orderBy: 'queued_at, rowid');
       final grouped = <String,List<Map<String,Object?>>>{};
       for (final change in changes) {
@@ -1541,6 +1542,32 @@ class AutoSyncService {
       // La cola local queda intacta para reintentar cuando vuelva la conexión.
     } finally {
       _running = false;
+    }
+  }
+
+  static Future<void> _enqueueUntracked(Database db) async {
+    for (final table in _tables) {
+      final rows = await db.query(table);
+      for (final row in rows) {
+        final syncId = table == 'settings' ? row['key'] as String : row['sync_id'] as String?;
+        if (syncId == null || syncId.isEmpty) continue;
+        final version = table == 'settings'
+          ? await _localVersion(table, syncId)
+          : ((row['sync_version'] as num?)?.toInt() ?? 0);
+        if (version > 0) continue;
+        final queued = await db.query('sync_changes', columns:['id'], where:'table_name=? AND sync_id=?', whereArgs:[table,syncId], limit:1);
+        if (queued.isNotEmpty) continue;
+        await db.insert('sync_changes', {
+          'id':const Uuid().v4(),
+          'table_name':table,
+          'sync_id':syncId,
+          'local_id':row['id'],
+          'operation':'upsert',
+          'queued_at':stamp(),
+          'base_version':version,
+          'status':'pending',
+        });
+      }
     }
   }
 
