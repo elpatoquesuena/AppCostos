@@ -1612,7 +1612,7 @@ class AutoSyncService {
     final operation = last['operation'] as String;
     final payload = operation == 'delete' ? null : await _readPayload(table, syncId);
     if (operation != 'delete' && payload == null) {
-      await db.update('sync_changes', {'status':'conflict'}, where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+      // Mantener el cambio pendiente hasta que estén disponibles sus referencias.
       return;
     }
     final ref = FirebaseFirestore.instance.collection('users').doc(uid).collection('records').doc('${table}__${syncId}');
