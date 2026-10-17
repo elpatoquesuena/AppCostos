@@ -1,0 +1,28 @@
+{
+  "project_info": {
+    "project_number": "1018507870415",
+    "project_id": "costeappbase",
+    "storage_bucket": "costeappbase.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1018507870415:android:d9d9e19c925fab97e6b7ba",
+        "android_client_info": {
+          "package_name": "com.appcostos.costeapp"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyBu0cWHgePdi9YMVRY7ASpKjF2mcSC17Zw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
