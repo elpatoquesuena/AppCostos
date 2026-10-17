@@ -1689,9 +1689,12 @@ class SettingsPage extends StatefulWidget { final VoidCallback onDataChanged; co
 class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
   String? lastRateUpdate;
+  int conflictCount = 0;
   Future<void> load() async {
     lastRateUpdate=null;
     final rows=await Store.instance.db.query('settings');
+    final conflicts=await Store.instance.db.query('sync_conflicts',columns:['id'],where:'resolution IS NULL');
+    conflictCount=conflicts.length;
     for(final r in rows){
       if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));
       if(r['key']=='ideal_margin')margin.text=fmt(number(r['value'] as String));
@@ -1720,6 +1723,78 @@ class _SettingsPageState extends State<SettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
     }
   }
+  Future<void> reviewConflicts() async {
+    final db = Store.instance.db;
+    final conflicts = await db.query('sync_conflicts', where:'resolution IS NULL', orderBy:'created_at DESC');
+    if (!mounted) return;
+    if (conflicts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('No hay conflictos pendientes.')));
+      return;
+    }
+    await showDialog<void>(
+      context:context,
+      builder:(ctx)=>AlertDialog(
+        title:const Text('Cambios en conflicto'),
+        content:SizedBox(
+          width:420,
+          height:460,
+          child:ListView(children:conflicts.map((conflict) {
+            final local = jsonDecode(conflict['local_payload'] as String);
+            final remote = jsonDecode(conflict['remote_payload'] as String);
+            final localText = const JsonEncoder.withIndent('  ').convert(local);
+            final remoteText = const JsonEncoder.withIndent('  ').convert(remote);
+            return Card(
+              child:Padding(
+                padding:const EdgeInsets.all(12),
+                child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Text('${conflict['table_name']} · ${conflict['sync_id']}',style:const TextStyle(fontWeight:FontWeight.bold)),
+                  const SizedBox(height:8),
+                  const Text('Propuesta de este teléfono'),
+                  Text(localText,maxLines:5,overflow:TextOverflow.ellipsis),
+                  const SizedBox(height:6),
+                  const Text('Versión que ya está en la nube'),
+                  Text(remoteText,maxLines:5,overflow:TextOverflow.ellipsis),
+                  const SizedBox(height:8),
+                  Wrap(spacing:8,children:[
+                    TextButton(onPressed:() async {
+                      Navigator.pop(ctx);
+                      await _resolveConflict(conflict, keepLocal:true);
+                    },child:const Text('Conservar este teléfono')),
+                    TextButton(onPressed:() async {
+                      Navigator.pop(ctx);
+                      await _resolveConflict(conflict, keepLocal:false);
+                    },child:const Text('Usar la nube')),
+                  ]),
+                ]),
+              ),
+            );
+          }).toList()),
+        ),
+        actions:[TextButton(onPressed:()=>Navigator.pop(ctx),child:const Text('Cerrar'))],
+      ),
+    );
+  }
+
+  Future<void> _resolveConflict(Map<String,Object?> conflict,{required bool keepLocal}) async {
+    final db = Store.instance.db;
+    final table = conflict['table_name'] as String;
+    final syncId = conflict['sync_id'] as String;
+    if (keepLocal) {
+      await db.update('sync_changes', {
+        'status':'pending',
+        'base_version':conflict['remote_version'],
+      }, where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'conflict']);
+      await db.update('sync_conflicts', {'resolution':'local'}, where:'id=?', whereArgs:[conflict['id']]);
+    } else {
+      await db.delete('sync_changes', where:'table_name=? AND sync_id=? AND status IN (?,?)', whereArgs:[table,syncId,'pending','conflict']);
+      await db.update('sync_conflicts', {'resolution':'cloud'}, where:'id=?', whereArgs:[conflict['id']]);
+    }
+    await AutoSyncService.syncNow();
+    await load();
+    widget.onDataChanged();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(keepLocal?'Se conservará la versión de este teléfono.':'Se aplicará la versión de la nube.')));
+  }
+
   Future<void> exportData() async {
     try {
       final file = await DataTransferService.exportWorkbook();
@@ -1780,6 +1855,18 @@ class _SettingsPageState extends State<SettingsPage> {
     const SizedBox(height:28),
     const Text('Sincronización entre tus dispositivos',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
     const SizedBox(height:8),
+    if(conflictCount>0) Card(
+      child:ListTile(
+        leading:const Icon(Icons.warning_amber_rounded,color:Colors.deepOrange),
+        title:Text('$conflictCount conflicto(s) pendiente(s)'),
+        subtitle:const Text('Los cambios en disputa se conservaron; elegí qué versión mantener.'),
+        trailing:const Icon(Icons.chevron_right),
+        onTap:reviewConflicts,
+      ),
+    ),
+    if(conflictCount==0) const Text('Sin conflictos pendientes detectados.'),
+    const SizedBox(height:8),
+    OutlinedButton.icon(onPressed:reviewConflicts,icon:const Icon(Icons.rule_folder_outlined),label:const Text('Revisar conflictos')),
     const Text('Subí una copia de los datos de este teléfono a tu cuenta o restaurá la copia guardada en la nube en otro teléfono. Restaurar reemplaza los datos locales; subí primero cualquier cambio que quieras conservar.'),
     const SizedBox(height:12),
     OutlinedButton.icon(
