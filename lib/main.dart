@@ -25,7 +25,7 @@ Future<void> main() async {
     ),
   );
   await Store.instance.open();
-  await seedSamples();
+  if (FirebaseAuth.instance.currentUser == null) await seedSamples();
   await Store.instance.ensureSyncMetadata();
   runApp(const CostosApp());
 }
@@ -1527,6 +1527,7 @@ class AutoSyncService {
     try {
       final db = Store.instance.db;
       await Store.instance.ensureSyncMetadata();
+      await _pullRemote(user.uid);
       await _enqueueUntracked(db);
       final changes = await db.query('sync_changes', where: "status='pending'", orderBy: 'queued_at, rowid');
       final grouped = <String,List<Map<String,Object?>>>{};
@@ -1571,6 +1572,20 @@ class AutoSyncService {
     }
   }
 
+  static Object? _canonicalValue(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((key) => key.toString()).toList()..sort();
+      return {for (final key in keys) key: _canonicalValue(value[key])};
+    }
+    if (value is List) return value.map(_canonicalValue).toList();
+    return value;
+  }
+
+  static bool _samePayload(Map<String,Object?>? a, Map<String,Object?>? b) {
+    if (a == null || b == null) return a == null && b == null;
+    return jsonEncode(_canonicalValue(a)) == jsonEncode(_canonicalValue(b));
+  }
+
   static Future<void> _pushGroup(String uid, List<Map<String,Object?>> events) async {
     final db = Store.instance.db;
     final first = events.first;
@@ -1605,6 +1620,18 @@ class AutoSyncService {
       });
       accepted = true;
     });
+    if (!accepted && operation == 'upsert' && remotePayload != null && _samePayload(payload, remotePayload)) {
+      await db.transaction((txn) async {
+        await txn.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
+        await txn.insert('sync_state', {'key':'version:${table}:${syncId}','value':remoteVersion.toString()}, conflictAlgorithm:ConflictAlgorithm.replace);
+        if (table != 'settings') {
+          await txn.update(table, {'sync_version':remoteVersion}, where:'sync_id=?', whereArgs:[syncId]);
+        }
+        await txn.delete('sync_changes', where:'table_name=? AND sync_id=? AND status=?', whereArgs:[table,syncId,'pending']);
+        await txn.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
+      });
+      return;
+    }
     if (!accepted) {
       final conflictId = const Uuid().v4();
       final localJson = jsonEncode({'operation':operation,'payload':payload});
