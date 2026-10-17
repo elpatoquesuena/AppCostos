@@ -18,6 +18,31 @@ jobs:
           channel: stable
       - name: Generate Android platform files
         run: flutter create --platforms=android --org com.appcostos --project-name costeapp --no-pub .
+      - name: Configure Firebase for Android
+        run: |
+          cp firebase/google-services.json android/app/google-services.json
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          settings = Path("android/settings.gradle.kts")
+          text = settings.read_text()
+          if 'com.google.gms.google-services' not in text:
+              pattern = r'(id\("org\.jetbrains\.kotlin\.android"\).*apply false)'
+              text, count = re.subn(pattern, r'\1\n    id("com.google.gms.google-services") version "4.4.2" apply false', text, count=1)
+              if count != 1:
+                  raise SystemExit("No se pudo agregar el plugin de Google Services en settings.gradle.kts")
+              settings.write_text(text)
+
+          app = Path("android/app/build.gradle.kts")
+          text = app.read_text()
+          if 'id("com.google.gms.google-services")' not in text:
+              pattern = r'(id\("dev\.flutter\.flutter-gradle-plugin"\))'
+              text, count = re.subn(pattern, r'\1\n    id("com.google.gms.google-services")', text, count=1)
+              if count != 1:
+                  raise SystemExit("No se pudo agregar el plugin de Google Services en build.gradle.kts")
+              app.write_text(text)
+          PY
       - name: Set Android compile SDK
         run: sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' android/app/build.gradle.kts
       - name: Set Android app display name
