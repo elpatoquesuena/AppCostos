@@ -213,6 +213,43 @@ class Dashboard extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text('Controlá los precios de tus insumos y calculá el costo de tus recetas.'),
+        const SizedBox(height: 12),
+        FutureBuilder<String?>(
+          future: Store.instance.db.query('settings', columns: ['value'], where: 'key=?', whereArgs: ['hourly_rate_updated'], limit: 1)
+              .then((rows) => rows.isEmpty ? null : rows.first['value'] as String?),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData && !snapshot.hasError) return const SizedBox.shrink();
+            final rawDate = snapshot.data;
+            final updated = rawDate == null ? null : DateTime.tryParse(rawDate);
+            final overdue = updated == null || DateTime.now().difference(updated).inDays > 30;
+            if (!overdue) return const SizedBox.shrink();
+            final message = updated == null
+                ? 'Registrá el valor de la hora de trabajo en Parámetros para mantener tus costos actualizados.'
+                : 'El valor de la hora de trabajo lleva más de 30 días sin actualizarse (última actualización: ${dateLabel(rawDate!)}).';
+            return Card(
+              color: const Color(0xFFFFF3E0),
+              child: InkWell(
+                onTap: () => go(4),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.warning_amber_rounded, color: Color(0xFF9A5B00), size: 28),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Revisá el valor de la hora de trabajo', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF784600))),
+                      const SizedBox(height: 4),
+                      Text(message, style: const TextStyle(color: Color(0xFF784600))),
+                      const SizedBox(height: 6),
+                      const Text('Tocá acá para ir a Parámetros.', style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF784600))),
+                    ])),
+                  ]),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
         const SizedBox(height: 20),
         FutureBuilder<List<int>>(
           future: Future.wait([
@@ -1240,16 +1277,36 @@ class DataTransferService {
 class SettingsPage extends StatefulWidget { final VoidCallback onDataChanged; const SettingsPage({super.key,required this.onDataChanged}); @override State<SettingsPage> createState()=>_SettingsPageState(); }
 class _SettingsPageState extends State<SettingsPage> {
   final rate=TextEditingController();final margin=TextEditingController();bool ready=false;
+  String? lastRateUpdate;
   Future<void> load() async {
     final rows=await Store.instance.db.query('settings');
-    for(final r in rows){if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));if(r['key']=='ideal_margin')margin.text=fmt(number(r['value'] as String));}
+    for(final r in rows){
+      if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));
+      if(r['key']=='ideal_margin')margin.text=fmt(number(r['value'] as String));
+      if(r['key']=='hourly_rate_updated')lastRateUpdate=r['value'] as String?;
+    }
     if(mounted)setState(()=>ready=true);
   }
   @override void initState(){super.initState();load();}
   Future<void> save() async {
-    await Store.instance.db.update('settings',{'value':number(rate.text).toString()},where:'key=?',whereArgs:['hourly_rate']);
-    await Store.instance.db.update('settings',{'value':number(margin.text).toString()},where:'key=?',whereArgs:['ideal_margin']);
-    if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
+    final db=Store.instance.db;
+    final savedRows=await db.query('settings',columns:['value'],where:'key=?',whereArgs:['hourly_rate'],limit:1);
+    final savedRate=savedRows.isEmpty?null:savedRows.first['value'] as String?;
+    final newRate=number(rate.text).toString();
+    final dateRows=await db.query('settings',columns:['value'],where:'key=?',whereArgs:['hourly_rate_updated'],limit:1);
+    final existingDate=dateRows.isEmpty?null:dateRows.first['value'] as String?;
+    if(savedRate!=newRate || DateTime.tryParse(existingDate??'')==null) {
+      final now=stamp();
+      await db.insert('settings',{'key':'hourly_rate_updated','value':now},conflictAlgorithm:ConflictAlgorithm.replace);
+      lastRateUpdate=now;
+    }
+    await db.update('settings',{'value':newRate},where:'key=?',whereArgs:['hourly_rate']);
+    await db.update('settings',{'value':number(margin.text).toString()},where:'key=?',whereArgs:['ideal_margin']);
+    if(mounted) {
+      setState(() {});
+      widget.onDataChanged();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Parámetros guardados.')));
+    }
   }
   Future<void> exportData() async {
     try {
@@ -1293,6 +1350,11 @@ class _SettingsPageState extends State<SettingsPage> {
   @override Widget build(BuildContext context)=>!ready?const Center(child:CircularProgressIndicator()):ListView(padding:const EdgeInsets.all(20),children:[
     const Text('Configurá los valores que se usan para estimar tus costos.'),
     const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
+    Padding(padding:const EdgeInsets.only(top:6),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Icon(Icons.calendar_month_outlined,size:18,color:Color(0xFF5D6B7A)),
+      const SizedBox(width:8),
+      Expanded(child:Text(lastRateUpdate==null?'Última actualización: sin registro':'Última actualización: ${dateLabel(lastRateUpdate!)}',style:const TextStyle(color:Color(0xFF5D6B7A)))),
+    ])),
     const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
     const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
     const SizedBox(height:28),
