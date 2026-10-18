@@ -1,12 +1,11 @@
-// Reemplazar con la configuración de la aplicación WEB registrada en Firebase Console.
-// Firebase Console > costeappbase > Project settings > Your apps > Web app.
-// No reutilizar el appId de Android. Este archivo contiene configuración pública de cliente,
-// no credenciales de servidor. La seguridad real depende de Firebase Authentication y Firestore Rules.
+// Configuración pública de la aplicación web registrada en Firebase.
+// La seguridad depende de Firebase Authentication y de las reglas de Firestore.
 export const firebaseConfig = {
-  apiKey: "REEMPLAZAR_API_KEY",
+  apiKey: "AIzaSyDxM_8WqDqTAmmWSTD_jwqXZ66y5D3YEcw",
   authDomain: "costeappbase.firebaseapp.com",
   projectId: "costeappbase",
   storageBucket: "costeappbase.firebasestorage.app",
   messagingSenderId: "1018507870415",
-  appId: "REEMPLAZAR_APP_ID_WEB"
+  appId: "1:1018507870415:web:0ef96d478836da5ae6b7ba",
+  measurementId: "G-N7WRJ4VPJ3"
 };
