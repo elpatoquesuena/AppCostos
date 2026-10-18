@@ -15,6 +15,9 @@ Esta carpeta inicia el cliente web de AppCostos. Esta fase NO modifica ni crea d
 3. Confirmar que Authentication tenga habilitado el método Email/Password.
 4. Servir esta carpeta desde un servidor local o un hosting HTTPS. No abrir `index.html` como archivo local.
 
+## Publicación
+El sitio se publica con GitHub Actions. En el repositorio, **Settings → Pages → Build and deployment → Source** debe estar seleccionado **GitHub Actions**.
+
 ## Seguridad de esta fase
 - El cliente no llama a `set`, `add`, `update` ni `delete` en Firestore.
 - Solo consulta documentos bajo el UID del usuario autenticado.
