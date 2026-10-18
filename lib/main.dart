@@ -1523,11 +1523,21 @@ class AutoSyncService {
   static const _tables = ['ingredients','recipes','ingredient_prices','recipe_prices','recipe_items','settings'];
 
   static Future<void> syncNow() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || _running) return;
     final db = Store.instance.db;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      await _saveSyncDiagnostic(db, 'No hay una sesión iniciada en Firebase. Iniciá sesión y volvé a intentar.');
+      return;
+    }
+    if (_running) {
+      await _saveSyncDiagnostic(db, 'Ya hay una sincronización en curso. Esperá unos segundos y volvé a consultar.');
+      return;
+    }
     final enabledRows = await db.query('sync_state', columns:['value'], where:'key=?', whereArgs:['sync_enabled'], limit:1);
-    if (enabledRows.isEmpty || enabledRows.first['value'] != '1') return;
+    if (enabledRows.isEmpty || enabledRows.first['value'] != '1') {
+      await _saveSyncDiagnostic(db, 'La sincronización automática está pausada en este teléfono.');
+      return;
+    }
     _running = true;
     try {
       await Store.instance.ensureSyncMetadata();
@@ -1550,17 +1560,19 @@ class AutoSyncService {
       await db.delete('sync_state', where:'key=?', whereArgs:['sync_last_error']);
     } catch (e) {
       // Registrar el error para que pueda verse desde Parámetros sin perder la cola local.
-      try {
-        final message = e.toString();
-        await db.insert('sync_state', {
-          'key':'sync_last_error',
-          'value':message.length > 500 ? message.substring(0, 500) : message,
-        }, conflictAlgorithm:ConflictAlgorithm.replace);
-      } catch (_) {
-        // Si la base local tampoco está disponible, no interrumpir el reintento.
-      }
+      await _saveSyncDiagnostic(db, e.toString());
     } finally {
       _running = false;
+    }
+  }
+
+  static Future<void> _saveSyncDiagnostic(Database db, String message) async {
+    try {
+      final value = message.length > 500 ? message.substring(0, 500) : message;
+      await db.insert('sync_state', {'key':'sync_last_error','value':value},
+          conflictAlgorithm:ConflictAlgorithm.replace);
+    } catch (_) {
+      // Si la base local tampoco está disponible, no interrumpir el reintento.
     }
   }
 
@@ -2042,8 +2054,25 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height:10),
         OutlinedButton.icon(
           onPressed:() async {
-            await AutoSyncService.syncNow();
-            await load();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content:Text('Intentando sincronizar…')),
+            );
+            try {
+              await AutoSyncService.syncNow();
+              await load();
+              if (!mounted) return;
+              final message = syncLastError != null && syncLastError!.isNotEmpty
+                  ? 'La sincronización no se completó: $syncLastError'
+                  : 'Intento finalizado. Cambios pendientes: $pendingSyncCount.';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content:Text(message), duration:const Duration(seconds:6)),
+              );
+            } catch (e) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content:Text('No se pudo consultar la sincronización: $e'), duration:const Duration(seconds:6)),
+              );
+            }
           },
           icon:const Icon(Icons.sync),
           label:const Text('Intentar sincronizar y actualizar estado'),
