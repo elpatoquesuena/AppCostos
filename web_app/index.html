@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17365d">
+  <title>AppCostos · Vista web de auditoría</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand-mark">AC</div>
+      <div><h1>AppCostos</h1><p>Panel web · fase de lectura segura</p></div>
+      <span class="readonly-pill">SOLO LECTURA</span>
+    </header>
+
+    <section id="login-panel" class="panel login-panel">
+      <h2>Ingresar</h2>
+      <p>Usá el mismo correo y contraseña de AppCostos.</p>
+      <form id="login-form">
+        <label for="email">Correo electrónico</label>
+        <input id="email" type="email" autocomplete="username" required>
+        <label for="password">Contraseña</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Iniciar sesión</button>
+      </form>
+      <p id="login-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="app-panel" hidden>
+      <div class="welcome-row">
+        <div><h2>Resumen de datos</h2><p id="account-label"></p></div>
+        <button id="logout-button" class="secondary">Cerrar sesión</button>
+      </div>
+      <div id="status-message" class="notice">Consultando datos de Firebase…</div>
+      <div class="stats-grid">
+        <article class="stat-card"><span>Insumos en copia manual</span><strong id="count-ingredients">—</strong></article>
+        <article class="stat-card"><span>Recetas en copia manual</span><strong id="count-recipes">—</strong></article>
+        <article class="stat-card"><span>Registros individuales</span><strong id="count-records">—</strong></article>
+      </div>
+      <section class="panel">
+        <div class="section-heading"><div><h3>Auditoría de Firestore</h3><p>Compara la copia manual conocida con los registros individuales de sincronización.</p></div><button id="refresh-button" class="secondary">Actualizar</button></div>
+        <div id="audit-table-wrap" class="table-wrap"></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><h3>Insumos</h3><p>Lectura de la copia manual. No se puede editar desde esta versión.</p></div><input id="ingredient-filter" class="filter" type="search" placeholder="Buscar insumo…"></div>
+        <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Presentación</th><th>Precio de presentación</th><th>Última actualización</th></tr></thead><tbody id="ingredients-body"></tbody></table></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><h3>Recetas</h3><p>Lectura de la copia manual.</p></div><input id="recipe-filter" class="filter" type="search" placeholder="Buscar receta…"></div>
+        <div class="table-wrap"><table><thead><tr><th>Receta</th><th>Rendimiento</th><th>Precio de venta</th><th>Última actualización</th></tr></thead><tbody id="recipes-body"></tbody></table></div>
+      </section>
+      <p class="footnote">Esta versión no modifica Firestore. La sincronización automática entre dispositivos todavía debe validarse antes de habilitar la edición web.</p>
+    </section>
+    <p id="global-error" class="error" role="alert"></p>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
