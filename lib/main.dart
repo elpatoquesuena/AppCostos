@@ -1543,8 +1543,22 @@ class AutoSyncService {
         await _pushGroup(user.uid, events);
       }
       await _pullRemote(user.uid);
-    } catch (_) {
-      // La cola local queda intacta para reintentar cuando vuelva la conexión.
+      await db.insert('sync_state', {
+        'key':'sync_last_success',
+        'value':DateTime.now().toIso8601String(),
+      }, conflictAlgorithm:ConflictAlgorithm.replace);
+      await db.delete('sync_state', where:'key=?', whereArgs:['sync_last_error']);
+    } catch (e) {
+      // Registrar el error para que pueda verse desde Parámetros sin perder la cola local.
+      try {
+        final message = e.toString();
+        await db.insert('sync_state', {
+          'key':'sync_last_error',
+          'value':message.length > 500 ? message.substring(0, 500) : message,
+        }, conflictAlgorithm:ConflictAlgorithm.replace);
+      } catch (_) {
+        // Si la base local tampoco está disponible, no interrumpir el reintento.
+      }
     } finally {
       _running = false;
     }
@@ -1788,12 +1802,22 @@ class _SettingsPageState extends State<SettingsPage> {
   String? lastRateUpdate;
   int conflictCount = 0;
   bool syncEnabled = false;
+  int pendingSyncCount = 0;
+  String? syncLastError;
+  String? syncLastSuccess;
   Future<void> load() async {
     lastRateUpdate=null;
-    final rows=await Store.instance.db.query('settings');
-    final conflicts=await Store.instance.db.query('sync_conflicts',columns:['id'],where:'resolution IS NULL');
-    final syncRows=await Store.instance.db.query('sync_state',columns:['value'],where:'key=?',whereArgs:['sync_enabled'],limit:1);
+    final db=Store.instance.db;
+    final rows=await db.query('settings');
+    final conflicts=await db.query('sync_conflicts',columns:['id'],where:'resolution IS NULL');
+    final syncRows=await db.query('sync_state',columns:['value'],where:'key=?',whereArgs:['sync_enabled'],limit:1);
+    final errorRows=await db.query('sync_state',columns:['value'],where:'key=?',whereArgs:['sync_last_error'],limit:1);
+    final successRows=await db.query('sync_state',columns:['value'],where:'key=?',whereArgs:['sync_last_success'],limit:1);
+    final pendingRows=await db.query('sync_changes',columns:['id'],where:"status='pending'");
     conflictCount=conflicts.length;
+    pendingSyncCount=pendingRows.length;
+    syncLastError=errorRows.isEmpty?null:errorRows.first['value'] as String?;
+    syncLastSuccess=successRows.isEmpty?null:successRows.first['value'] as String?;
     syncEnabled=syncRows.isNotEmpty && syncRows.first['value']=='1';
     for(final r in rows){
       if(r['key']=='hourly_rate')rate.text=fmt(number(r['value'] as String));
@@ -1997,6 +2021,36 @@ class _SettingsPageState extends State<SettingsPage> {
     if(conflictCount==0) const Text('Sin conflictos pendientes detectados.'),
     const SizedBox(height:8),
     OutlinedButton.icon(onPressed:reviewConflicts,icon:const Icon(Icons.rule_folder_outlined),label:const Text('Revisar conflictos')),
+    const SizedBox(height:12),
+    Card(child:Padding(
+      padding:const EdgeInsets.all(14),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        const Text('Diagnóstico de sincronización',style:TextStyle(fontWeight:FontWeight.bold)),
+        const SizedBox(height:8),
+        Text('Cambios pendientes de enviar: $pendingSyncCount'),
+        if(syncLastError!=null && syncLastError!.isNotEmpty) ...[
+          const SizedBox(height:6),
+          const Text('Último error:',style:TextStyle(fontWeight:FontWeight.w600,color:Colors.deepOrange)),
+          SelectableText(syncLastError!),
+        ] else if(syncLastSuccess!=null) ...[
+          const SizedBox(height:6),
+          Text('Última sincronización completada: $syncLastSuccess'),
+        ] else ...[
+          const SizedBox(height:6),
+          const Text('Todavía no hay un resultado de sincronización registrado.'),
+        ],
+        const SizedBox(height:10),
+        OutlinedButton.icon(
+          onPressed:() async {
+            await AutoSyncService.syncNow();
+            await load();
+          },
+          icon:const Icon(Icons.sync),
+          label:const Text('Intentar sincronizar y actualizar estado'),
+        ),
+      ]),
+    )),
+    const SizedBox(height:12),
     const Text('Subí una copia de los datos de este teléfono a tu cuenta o restaurá la copia guardada en la nube en otro teléfono. Restaurar reemplaza los datos locales; subí primero cualquier cambio que quieras conservar.'),
     const SizedBox(height:12),
     OutlinedButton.icon(
