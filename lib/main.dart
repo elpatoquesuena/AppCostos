@@ -25,7 +25,7 @@ Future<void> main() async {
     ),
   );
   await Store.instance.open();
-  if (FirebaseAuth.instance.currentUser == null) await seedSamples();
+  // No sembrar datos de ejemplo antes de autenticar: podrían duplicar registros que ya existen en la nube.
   await Store.instance.ensureSyncMetadata();
   runApp(const CostosApp());
 }
