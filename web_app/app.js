@@ -3,7 +3,7 @@ import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs
+  getFirestore, collection, doc, getDoc, getDocs, onSnapshot
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -18,6 +18,7 @@ const LABELS = {
   settings: "Parámetros"
 };
 let app, auth, db, currentSnapshot = null, currentRecords = [];
+let unsubscribeRecords = null;
 let initError = "";
 
 function setStatus(message, kind = "") {
@@ -50,6 +51,27 @@ function tablesFromSnapshot() {
   return currentSnapshot && currentSnapshot.tables && typeof currentSnapshot.tables === "object"
     ? currentSnapshot.tables : null;
 }
+
+// Prefer the synchronized live records for any table that has been published by Android.
+// Keep the manual snapshot only as a fallback for tables not yet present in records.
+function tablesForDisplay() {
+  const snapshotTables = tablesFromSnapshot() || {};
+  const liveByTable = new Map(TABLES.map(table => [table, new Map()]));
+  const seenTables = new Set();
+  for (const item of currentRecords) {
+    const data = item.data || {};
+    const table = data.table;
+    const syncId = data.syncId || item.id;
+    if (!liveByTable.has(table) || !syncId) continue;
+    seenTables.add(table);
+    const rows = liveByTable.get(table);
+    if (data.deleted === true) rows.delete(syncId);
+    else rows.set(syncId, data.payload ?? {});
+  }
+  const result = { ...snapshotTables };
+  for (const table of seenTables) result[table] = [...liveByTable.get(table).values()];
+  return result;
+}
 function renderAudit() {
   const snapshotTables = tablesFromSnapshot();
   const active = new Map(TABLES.map(t => [t, new Map()]));
@@ -78,8 +100,9 @@ function renderAudit() {
   $("audit-table-wrap").innerHTML = html;
   const recordsCount = currentRecords.filter(x => x.data.deleted !== true).length;
   $("count-records").textContent = formatNumber(recordsCount);
-  $("count-ingredients").textContent = formatNumber(snapshotTables?.ingredients?.length ?? 0);
-  $("count-recipes").textContent = formatNumber(snapshotTables?.recipes?.length ?? 0);
+  const displayTables = tablesForDisplay();
+  $("count-ingredients").textContent = formatNumber(displayTables?.ingredients?.length ?? 0);
+  $("count-recipes").textContent = formatNumber(displayTables?.recipes?.length ?? 0);
 
   if (!currentSnapshot) {
     setStatus("No se encontró la copia manual users/{uid}/appData/current. No se modificó ningún dato. Antes de seguir, verificá la sincronización manual desde Android.", "warning");
@@ -96,7 +119,7 @@ function renderAudit() {
   }
 }
 function renderIngredients() {
-  const rows = tablesFromSnapshot()?.ingredients;
+  const rows = tablesForDisplay()?.ingredients;
   const filter = $("ingredient-filter").value.trim().toLocaleLowerCase("es-AR");
   if (!Array.isArray(rows)) {
     $("ingredients-body").innerHTML = emptyRow(4, "No hay datos de insumos en la copia manual.");
@@ -109,7 +132,7 @@ function renderIngredients() {
     <td>${escapeHtml(formatMoney(r.price))}</td><td>${escapeHtml(dateText(r.updated))}</td></tr>`).join("") : emptyRow(4, "No hay insumos que coincidan con la búsqueda.");
 }
 function renderRecipes() {
-  const rows = tablesFromSnapshot()?.recipes;
+  const rows = tablesForDisplay()?.recipes;
   const filter = $("recipe-filter").value.trim().toLocaleLowerCase("es-AR");
   if (!Array.isArray(rows)) {
     $("recipes-body").innerHTML = emptyRow(4, "No hay datos de recetas en la copia manual.");
@@ -128,15 +151,26 @@ async function loadData() {
   const uid = auth.currentUser.uid;
   try {
     const copyRef = doc(db, "users", uid, "appData", "current");
-    const [copySnap, recordsSnap] = await Promise.all([
-      getDoc(copyRef),
-      getDocs(collection(db, "users", uid, "records"))
-    ]);
+    const copySnap = await getDoc(copyRef);
     currentSnapshot = copySnap.exists() ? copySnap.data() : null;
+    const recordsRef = collection(db, "users", uid, "records");
+    const recordsSnap = await getDocs(recordsRef);
     currentRecords = recordsSnap.docs.map(d => ({ id: d.id, data: d.data() }));
     renderAudit();
     renderIngredients();
     renderRecipes();
+
+    // Keep the web view synchronized while Android publishes record changes.
+    if (unsubscribeRecords) unsubscribeRecords();
+    unsubscribeRecords = onSnapshot(recordsRef, (snapshot) => {
+      currentRecords = snapshot.docs.map(d => ({ id: d.id, data: d.data() }));
+      renderAudit();
+      renderIngredients();
+      renderRecipes();
+    }, (error) => {
+      console.error(error);
+      setStatus("No se pudo mantener la actualización en tiempo real. Podés usar el botón Actualizar para volver a consultar.", "warning");
+    });
   } catch (error) {
     console.error(error);
     setStatus("No se pudieron leer los datos. Revisá la conexión, el proyecto Firebase y las reglas de Firestore.", "error-notice");
@@ -176,6 +210,10 @@ if (firebaseConfig.apiKey.startsWith("REEMPLAZAR") || firebaseConfig.appId.start
         $("account-label").textContent = "Sesión iniciada: " + user.email;
         await loadData();
       } else {
+        if (unsubscribeRecords) {
+          unsubscribeRecords();
+          unsubscribeRecords = null;
+        }
         currentSnapshot = null;
         currentRecords = [];
       }
