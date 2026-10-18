@@ -56,20 +56,24 @@ function tablesFromSnapshot() {
 // Keep the manual snapshot only as a fallback for tables not yet present in records.
 function tablesForDisplay() {
   const snapshotTables = tablesFromSnapshot() || {};
-  const liveByTable = new Map(TABLES.map(table => [table, new Map()]));
-  const seenTables = new Set();
-  for (const item of currentRecords) {
-    const data = item.data || {};
-    const table = data.table;
-    const syncId = data.syncId || item.id;
-    if (!liveByTable.has(table) || !syncId) continue;
-    seenTables.add(table);
-    const rows = liveByTable.get(table);
-    if (data.deleted === true) rows.delete(syncId);
-    else rows.set(syncId, data.payload ?? {});
+  const result = {};
+  for (const table of TABLES) {
+    const rows = new Map();
+    for (const row of (Array.isArray(snapshotTables[table]) ? snapshotTables[table] : [])) {
+      const key = row.sync_id ? String(row.sync_id) : (row.id != null ? `snapshot:${row.id}` : null);
+      if (key) rows.set(key, row);
+    }
+    // Apply the latest cloud state over the snapshot without hiding snapshot rows
+    // that have not yet been published as individual records.
+    for (const item of currentRecords) {
+      const data = item.data || {};
+      if (data.table !== table) continue;
+      const syncId = String(data.syncId || item.id);
+      if (data.deleted === true) rows.delete(syncId);
+      else rows.set(syncId, data.payload ?? {});
+    }
+    result[table] = [...rows.values()];
   }
-  const result = { ...snapshotTables };
-  for (const table of seenTables) result[table] = [...liveByTable.get(table).values()];
   return result;
 }
 function renderAudit() {
