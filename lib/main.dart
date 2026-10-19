@@ -1516,7 +1516,6 @@ class CloudSyncService {
       await db.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
     }
   }
-}
 
   static Future<void> resetTestData() async {
     final user = FirebaseAuth.instance.currentUser;
