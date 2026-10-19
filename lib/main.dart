@@ -1553,6 +1553,7 @@ class CloudSyncService {
         await txn.delete('sync_changes');
         await txn.delete('sync_conflicts');
         await txn.delete('sync_state');
+        await txn.insert('sync_state', {'key':'applying_remote','value':'1'}, conflictAlgorithm:ConflictAlgorithm.replace);
         await txn.insert('settings', {'key':'hourly_rate','value':'0'}, conflictAlgorithm:ConflictAlgorithm.replace);
         await txn.insert('settings', {'key':'ideal_margin','value':'60'}, conflictAlgorithm:ConflictAlgorithm.replace);
       });
