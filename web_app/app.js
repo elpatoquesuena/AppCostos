@@ -58,21 +58,31 @@ function tablesForDisplay() {
   const snapshotTables = tablesFromSnapshot() || {};
   const result = {};
   for (const table of TABLES) {
-    const rows = new Map();
-    for (const row of (Array.isArray(snapshotTables[table]) ? snapshotTables[table] : [])) {
-      const key = row.sync_id ? String(row.sync_id) : (row.id != null ? `snapshot:${row.id}` : null);
-      if (key) rows.set(key, row);
-    }
-    // Apply the latest cloud state over the snapshot without hiding snapshot rows
-    // that have not yet been published as individual records.
+    const liveRows = new Map();
+    let hasLiveRecords = false;
     for (const item of currentRecords) {
       const data = item.data || {};
       if (data.table !== table) continue;
+      hasLiveRecords = true;
       const syncId = String(data.syncId || item.id);
-      if (data.deleted === true) rows.delete(syncId);
-      else rows.set(syncId, data.payload ?? {});
+      if (data.deleted === true) liveRows.delete(syncId);
+      else liveRows.set(syncId, data.payload ?? {});
     }
-    result[table] = [...rows.values()];
+
+    // Use one authoritative source per table. Merging snapshot rows with live records
+    // can show the same ingredient or recipe twice when their IDs use different formats.
+    if (hasLiveRecords) {
+      result[table] = [...liveRows.values()];
+      continue;
+    }
+
+    const snapshotRows = Array.isArray(snapshotTables[table]) ? snapshotTables[table] : [];
+    const uniqueRows = new Map();
+    for (const row of snapshotRows) {
+      const key = row.sync_id ? String(row.sync_id) : (row.id != null ? `snapshot:${row.id}` : null);
+      if (key) uniqueRows.set(key, row);
+    }
+    result[table] = [...uniqueRows.values()];
   }
   return result;
 }
