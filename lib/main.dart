@@ -2039,26 +2039,19 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  @override Widget build(BuildContext context)=>!ready?const Center(child:CircularProgressIndicator()):ListView(padding:const EdgeInsets.all(20),children:[
-    const Text('Configurá los valores que se usan para estimar tus costos.'),
-    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
-    Padding(padding:const EdgeInsets.only(top:6),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
-      const Icon(Icons.calendar_month_outlined,size:18,color:Color(0xFF5D6B7A)),
-      const SizedBox(width:8),
-      Expanded(child:Text(lastRateUpdate==null?'Última actualización: sin registro':'Última actualización: ${dateLabel(lastRateUpdate!)}',style:const TextStyle(color:Color(0xFF5D6B7A)))),
-    ])),
-    const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
-    const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
-    const SizedBox(height:28),
-    const Text('Respaldo y migración',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+  bool showingSync = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!ready) return const Center(child:CircularProgressIndicator());
+    return PopScope(
+      canPop: !showingSync,
+      onPopInvokedWithResult: (didPop, result) { if (!didPop && showingSync && mounted) setState(()=>showingSync=false); },
+      child: ListView(padding:const EdgeInsets.all(20),children: showingSync ? [
+    Row(children:[IconButton(onPressed:()=>setState(()=>showingSync=false),icon:const Icon(Icons.arrow_back),tooltip:'Volver a Parámetros'),const Expanded(child:Text('Sincronización',style:TextStyle(fontSize:22,fontWeight:FontWeight.bold)))]),
     const SizedBox(height:8),
-    const Text('Exportá toda la información a un Excel para guardarla o transferirla a otro dispositivo. La importación reemplaza los datos que hay actualmente en este teléfono.'),
-    const SizedBox(height:12),
-    OutlinedButton.icon(onPressed:exportData,icon:const Icon(Icons.file_download_outlined),label:const Text('Exportar toda la información a Excel')),
-    const SizedBox(height:8),
-    OutlinedButton.icon(onPressed:importData,icon:const Icon(Icons.file_upload_outlined),label:const Text('Importar Excel de otro dispositivo')),
-    const SizedBox(height:28),
-    const Text('Sincronización entre tus dispositivos',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+    const Text('Administrá la sincronización entre dispositivos, las copias de seguridad y el reinicio de los datos de prueba.'),
+    const SizedBox(height:16),
     const SizedBox(height:8),
     Card(child:ListTile(
       leading:Icon(syncEnabled?Icons.cloud_done_outlined:Icons.cloud_off_outlined),
@@ -2215,8 +2208,29 @@ class _SettingsPageState extends State<SettingsPage> {
         ]),
       ),
     ),
-    const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
-  ]);
+      ] : [
+    const Text('Configurá los valores que se usan para estimar tus costos.'),
+    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'$ ',helperText:'En pesos argentinos')),
+    Padding(padding:const EdgeInsets.only(top:6),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+      const Icon(Icons.calendar_month_outlined,size:18,color:Color(0xFF5D6B7A)),
+      const SizedBox(width:8),
+      Expanded(child:Text(lastRateUpdate==null?'Última actualización: sin registro':'Última actualización: '+dateLabel(lastRateUpdate!),style:const TextStyle(color:Color(0xFF5D6B7A)))),
+    ])),
+    const SizedBox(height:18),TextField(controller:margin,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Margen de contribución ideal',suffixText:'%',helperText:'Objetivo sobre el precio de venta')),
+    const SizedBox(height:24),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_outlined),label:const Text('Guardar parámetros')),
+    const SizedBox(height:28),
+    Card(child:ListTile(leading:const Icon(Icons.cloud_sync_outlined),title:const Text('Sincronización'),subtitle:Text(syncEnabled?'Sincronización automática activa':'Sincronización automática pausada'),trailing:const Icon(Icons.chevron_right),onTap:()=>setState(()=>showingSync=true))),
+    const SizedBox(height:28),
+    const Text('Respaldo y migración',style:TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+    const SizedBox(height:8),
+    const Text('Exportá toda la información a un Excel para guardarla o transferirla a otro dispositivo. La importación reemplaza los datos que hay actualmente en este teléfono.'),
+    const SizedBox(height:12),
+    OutlinedButton.icon(onPressed:exportData,icon:const Icon(Icons.file_download_outlined),label:const Text('Exportar toda la información a Excel')),
+    const SizedBox(height:8),
+    OutlinedButton.icon(onPressed:importData,icon:const Icon(Icons.file_upload_outlined),label:const Text('Importar Excel de otro dispositivo')),
+      ]),
+    );
+  }
   @override void dispose(){rate.dispose();margin.dispose();super.dispose();}
 }
 
