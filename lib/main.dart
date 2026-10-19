@@ -1518,6 +1518,53 @@ class CloudSyncService {
   }
 }
 
+  static Future<void> resetTestData() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('Iniciá sesión antes de limpiar los datos.');
+    final firestore = FirebaseFirestore.instance;
+    final userRef = firestore.collection('users').doc(user.uid);
+
+    // Desactivar la sincronización local primero para evitar que los registros se vuelvan a subir.
+    final db = Store.instance.db;
+    await db.insert('sync_state', {'key':'sync_enabled','value':'0'},
+        conflictAlgorithm:ConflictAlgorithm.replace);
+
+    // Eliminar todos los registros individuales de sincronización y los conflictos remotos.
+    for (final subcollection in ['records','conflicts']) {
+      while (true) {
+        final snap = await userRef.collection(subcollection).limit(400).get();
+        if (snap.docs.isEmpty) break;
+        final batch = firestore.batch();
+        for (final doc in snap.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+      }
+    }
+    await userRef.collection('appData').doc('current').delete();
+
+    // Vaciar la base local respetando las relaciones entre recetas, insumos e historiales.
+    await db.insert('sync_state', {'key':'applying_remote','value':'1'},
+        conflictAlgorithm:ConflictAlgorithm.replace);
+    try {
+      await db.transaction((txn) async {
+        for (final table in const ['recipe_items','ingredient_prices','recipe_prices','recipes','ingredients']) {
+          await txn.delete(table);
+        }
+        await txn.delete('sync_changes');
+        await txn.delete('sync_conflicts');
+        await txn.delete('sync_state');
+        await txn.insert('settings', {'key':'hourly_rate','value':'0'}, conflictAlgorithm:ConflictAlgorithm.replace);
+        await txn.insert('settings', {'key':'ideal_margin','value':'60'}, conflictAlgorithm:ConflictAlgorithm.replace);
+      });
+    } finally {
+      await db.delete('sync_state', where:'key=?', whereArgs:['applying_remote']);
+      await db.insert('sync_state', {'key':'sync_enabled','value':'0'},
+          conflictAlgorithm:ConflictAlgorithm.replace);
+    }
+  }
+}
+
 class AutoSyncService {
   static bool _running = false;
   static const _tables = ['ingredients','recipes','ingredient_prices','recipe_prices','recipe_items','settings'];
@@ -2120,6 +2167,53 @@ class _SettingsPageState extends State<SettingsPage> {
       },
       icon:const Icon(Icons.cloud_download_outlined),
       label:const Text('Restaurar datos desde la nube'),
+    ),
+    const SizedBox(height:24),
+    Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('Reiniciar datos de prueba',style:TextStyle(fontWeight:FontWeight.bold)),
+          const SizedBox(height:6),
+          const Text('Borra insumos, recetas, historiales y copias sincronizadas de esta cuenta, tanto del teléfono como de la nube. La sincronización queda pausada. Esta acción no se puede deshacer.'),
+          const SizedBox(height:10),
+          OutlinedButton.icon(
+            style:OutlinedButton.styleFrom(foregroundColor:Colors.red),
+            onPressed:() async {
+              final confirmed = await showDialog<bool>(
+                context:context,
+                builder:(ctx)=>AlertDialog(
+                  title:const Text('¿Borrar todos los datos de prueba?'),
+                  content:const Text('Se eliminarán los insumos, recetas, historiales y datos sincronizados de esta cuenta en la nube. No se puede deshacer.'),
+                  actions:[
+                    TextButton(onPressed:()=>Navigator.pop(ctx,false),child:const Text('Cancelar')),
+                    FilledButton(
+                      style:FilledButton.styleFrom(backgroundColor:Colors.red),
+                      onPressed:()=>Navigator.pop(ctx,true),
+                      child:const Text('Borrar todo'),
+                    ),
+                  ],
+                ),
+              );
+              if(confirmed!=true || !mounted) return;
+              try {
+                await CloudSyncService.resetTestData();
+                await load();
+                widget.onDataChanged();
+                if(mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content:Text('Datos de prueba eliminados del teléfono y de la nube. Sincronización pausada.')),
+                );
+              } catch(e) {
+                if(mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content:Text('No se pudo completar la limpieza: $e'),duration:const Duration(seconds:8)),
+                );
+              }
+            },
+            icon:const Icon(Icons.delete_forever_outlined),
+            label:const Text('Borrar datos de prueba del teléfono y la nube'),
+          ),
+        ]),
+      ),
     ),
     const SizedBox(height:24),const Card(child:Padding(padding:EdgeInsets.all(16),child:Text('Margen de contribución = (precio de venta − costo estimado) ÷ precio de venta. El costo estimado incluye insumos y mano de obra.'))),
   ]);
