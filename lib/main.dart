@@ -2210,7 +2210,7 @@ class _SettingsPageState extends State<SettingsPage> {
     ),
       ] : [
     const Text('Configurá los valores que se usan para estimar tus costos.'),
-    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'$ ',helperText:'En pesos argentinos')),
+    const SizedBox(height:24),TextField(controller:rate,keyboardType:const TextInputType.numberWithOptions(decimal:true),inputFormatters:[NumericThousandsFormatter()],decoration:const InputDecoration(labelText:'Valor de la hora de trabajo',prefixText:'\$ ',helperText:'En pesos argentinos')),
     Padding(padding:const EdgeInsets.only(top:6),child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
       const Icon(Icons.calendar_month_outlined,size:18,color:Color(0xFF5D6B7A)),
       const SizedBox(width:8),
