@@ -1,20 +1,20 @@
 {
   "project_info": {
-    "project_number": "1018507870415",
-    "project_id": "costeappbase",
-    "storage_bucket": "costeappbase.firebasestorage.app"
+    "project_number": "910394643082",
+    "project_id": "baseappcostos",
+    "storage_bucket": "baseappcostos.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1018507870415:android:d9d9e19c925fab97e6b7ba",
+        "mobilesdk_app_id": "1:910394643082:android:41dc623ff286de304e9373",
         "android_client_info": {
-          "package_name": "com.appcostos.costeapp"
+          "package_name": "com.nash.costeapp"
         }
       },
       "api_key": [
         {
-          "current_key": "AIzaSyBu0cWHgePdi9YMVRY7ASpKjF2mcSC17Zw"
+          "current_key": "AIzaSyCfmfobEUnMN7kKoL_EGR3nfQOx5Zm-L-s"
         }
       ],
       "services": {
