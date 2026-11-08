@@ -17,7 +17,7 @@ jobs:
         with:
           channel: stable
       - name: Generate Android platform files
-        run: flutter create --platforms=android --org com.appcostos --project-name costeapp --no-pub .
+        run: flutter create --platforms=android --org com.nash --project-name costeapp --no-pub .
       - name: Configure Firebase for Android
         run: |
           cp firebase/google-services.json android/app/google-services.json
@@ -29,7 +29,7 @@ jobs:
           text = settings.read_text()
           if 'com.google.gms.google-services' not in text:
               pattern = r'(id\("org\.jetbrains\.kotlin\.android"\).*apply false)'
-              text, count = re.subn(pattern, r'\1\n    id("com.google.gms.google-services") version "4.4.2" apply false', text, count=1)
+              text, count = re.subn(pattern, r'\1\n    id("com.google.gms.google-services") version "4.5.0" apply false', text, count=1)
               if count != 1:
                   raise SystemExit("No se pudo agregar el plugin de Google Services en settings.gradle.kts")
               settings.write_text(text)
