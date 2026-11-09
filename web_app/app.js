@@ -3,7 +3,7 @@ import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs, onSnapshot
+  getFirestore, collection, doc, getDoc, getDocs, onSnapshot, setDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { initWebEditor } from "./editor.js";
@@ -87,6 +87,77 @@ function tablesForDisplay() {
   }
   return result;
 }
+function buildSnapshotTables() {
+  const live = new Map(TABLES.map(table => [table, new Map()]));
+  for (const item of currentRecords) {
+    const data = item.data || {};
+    const table = data.table;
+    const syncId = String(data.syncId || item.id || "");
+    if (!live.has(table) || !syncId) continue;
+    if (data.deleted === true) live.get(table).delete(syncId);
+    else live.get(table).set(syncId, data.payload || {});
+  }
+  const rows = Object.fromEntries(TABLES.map(table => [table, []]));
+  const ingredientIds = new Map();
+  const recipeIds = new Map();
+
+  const sorted = table => [...live.get(table).entries()].sort((a,b) => a[0].localeCompare(b[0]));
+  sorted("ingredients").forEach(([syncId,p],index) => {
+    const id = index + 1;
+    ingredientIds.set(syncId,id);
+    rows.ingredients.push({id,name:p.name ?? "",description:p.description ?? "",qty:p.qty ?? 0,unit:p.unit ?? "",price:p.price ?? 0,updated:p.updated ?? ""});
+  });
+  sorted("recipes").forEach(([syncId,p],index) => {
+    const id = index + 1;
+    recipeIds.set(syncId,id);
+    rows.recipes.push({id,name:p.name ?? "",description:p.description ?? "",minutes:p.minutes ?? 0,yield_qty:p.yield_qty ?? 0,yield_unit:p.yield_unit ?? "",sale_qty:p.sale_qty ?? 0,sale_unit:p.sale_unit ?? "",portions_per_presentation:p.portions_per_presentation ?? 1,sale_price:p.sale_price ?? 0,updated:p.updated ?? "",sale_updated:p.sale_updated ?? ""});
+  });
+  sorted("ingredient_prices").forEach(([syncId,p],index) => {
+    const parent = ingredientIds.get(String(p.ingredient_sync_id || ""));
+    if (!parent) throw new Error("No se puede crear el respaldo: hay un historial de precios de insumo sin su insumo asociado.");
+    rows.ingredient_prices.push({id:index+1,ingredient_id:parent,price:p.price ?? 0,date:p.date ?? ""});
+  });
+  sorted("recipe_prices").forEach(([syncId,p],index) => {
+    const parent = recipeIds.get(String(p.recipe_sync_id || ""));
+    if (!parent) throw new Error("No se puede crear el respaldo: hay un historial de precios de receta sin su receta asociada.");
+    rows.recipe_prices.push({id:index+1,recipe_id:parent,price:p.price ?? 0,date:p.date ?? ""});
+  });
+  sorted("recipe_items").forEach(([syncId,p],index) => {
+    const recipe = recipeIds.get(String(p.recipe_sync_id || ""));
+    const ingredient = ingredientIds.get(String(p.ingredient_sync_id || ""));
+    if (!recipe || !ingredient) throw new Error("No se puede crear el respaldo: hay un ingrediente de receta con referencias incompletas.");
+    rows.recipe_items.push({id:index+1,recipe_id:recipe,ingredient_id:ingredient,qty:p.qty ?? 0,unit:p.unit ?? ""});
+  });
+  sorted("settings").forEach(([key,p]) => rows.settings.push({key,value:p.value ?? ""}));
+  return rows;
+}
+
+async function updateManualSnapshot() {
+  if (!auth.currentUser) return;
+  const button = $("backup-button");
+  button.disabled = true;
+  button.textContent = "Generando copia…";
+  try {
+    if (!currentRecords.length) throw new Error("No hay registros individuales para respaldar. No se modificó la copia manual.");
+    const tables = buildSnapshotTables();
+    const uid = auth.currentUser.uid;
+    const ref = doc(db,"users",uid,"appData","current");
+    await setDoc(ref,{formatVersion:1,updatedAt:serverTimestamp(),tables});
+    const saved = await getDoc(ref);
+    currentSnapshot = saved.exists() ? saved.data() : null;
+    renderAudit();
+    renderIngredients();
+    renderRecipes();
+    setStatus("Copia manual actualizada correctamente a partir de los registros individuales vigentes. La sincronización automática no se modificó.","success");
+  } catch (error) {
+    console.error(error);
+    setStatus(error?.message || "No se pudo actualizar la copia manual. No se modificaron los registros individuales.","warning");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Actualizar copia de respaldo";
+  }
+}
+
 function renderAudit() {
   const snapshotTables = tablesFromSnapshot();
   const active = new Map(TABLES.map(t => [t, new Map()]));
@@ -208,6 +279,9 @@ $("login-form").addEventListener("submit", async (event) => {
 });
 $("logout-button").addEventListener("click", () => signOut(auth));
 $("refresh-button").addEventListener("click", loadData);
+$("backup-button").addEventListener("click", () => {
+  if (window.confirm("Se reemplazará la copia manual actual por una fotografía completa de los registros individuales vigentes. Los registros de sincronización no se modificarán. ¿Querés continuar?")) updateManualSnapshot();
+});
 $("ingredient-filter").addEventListener("input", renderIngredients);
 $("recipe-filter").addEventListener("input", renderRecipes);
 
