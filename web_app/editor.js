@@ -80,6 +80,7 @@ async function save(event) {
     await runTransaction(db, async tx => {
       const current = await tx.get(mainRef);
       const version = current.exists() ? Number(current.data().version || 0) : 0;
+      if (original && version !== Number(original._version || 0)) throw new Error("Este registro cambió desde que lo abriste. Cerrá el formulario, actualizá los datos y volvé a editarlo.");
       tx.set(mainRef,{table,syncId,version:version+1,deleted:false,payload,updatedAt:new Date()});
       if (historyRef) tx.set(historyRef,{table:history.table,syncId:history.syncId,version:1,deleted:false,payload:history.payload,updatedAt:new Date()});
     });
