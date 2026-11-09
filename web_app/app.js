@@ -223,7 +223,7 @@ if (firebaseConfig.apiKey.startsWith("REEMPLAZAR") || firebaseConfig.appId.start
       $("login-panel").hidden = !!user;
       $("app-panel").hidden = !user;
       if (user) {
-        initWebEditor();
+        initWebEditor(auth, db);
         $("account-label").textContent = "Sesión iniciada: " + user.email;
         await loadData();
       } else {
