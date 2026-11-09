@@ -116,6 +116,7 @@ function renderAudit() {
   const recordsCount = currentRecords.filter(x => x.data.deleted !== true).length;
   $("count-records").textContent = formatNumber(recordsCount);
   const displayTables = tablesForDisplay();
+  window.__appCostosRows = displayTables;
   $("count-ingredients").textContent = formatNumber(displayTables?.ingredients?.length ?? 0);
   $("count-recipes").textContent = formatNumber(displayTables?.recipes?.length ?? 0);
 
