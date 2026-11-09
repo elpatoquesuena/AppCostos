@@ -1,8 +1,7 @@
-import { getAuth } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { getFirestore, doc, runTransaction } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import { doc, runTransaction } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 
-const auth = getAuth();
-const db = getFirestore();
+let auth = null;
+let db = null;
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const uuid = () => crypto.randomUUID().replaceAll("-", "");
@@ -92,7 +91,9 @@ async function save(event) {
     $("editor-error").textContent = error?.message || "No se pudo guardar el cambio.";
   }
 }
-export function initWebEditor() {
+export function initWebEditor(firebaseAuth, firestore) {
+  auth = firebaseAuth;
+  db = firestore;
   if ($("editor-dialog").dataset.initialized) return;
   $("editor-dialog").dataset.initialized = "1";
   $("new-ingredient-button").addEventListener("click",()=>openEditor("ingredient",null));
