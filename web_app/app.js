@@ -6,6 +6,7 @@ import {
   getFirestore, collection, doc, getDoc, getDocs, onSnapshot
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { initWebEditor } from "./editor.js";
 
 const $ = (id) => document.getElementById(id);
 const TABLES = ["ingredients", "ingredient_prices", "recipes", "recipe_items", "recipe_prices", "settings"];
@@ -66,7 +67,7 @@ function tablesForDisplay() {
       hasLiveRecords = true;
       const syncId = String(data.syncId || item.id);
       if (data.deleted === true) liveRows.delete(syncId);
-      else liveRows.set(syncId, data.payload ?? {});
+      else liveRows.set(syncId, { ...(data.payload ?? {}), sync_id: syncId, _version: Number(data.version || 0) });
     }
 
     // Use one authoritative source per table. Merging snapshot rows with live records
@@ -126,9 +127,9 @@ function renderAudit() {
       return expected !== null && expected !== active.get(t).size;
     });
     if (mismatches.length) {
-      setStatus("La copia manual existe, pero hay diferencias de cantidad en una o más tablas. Esta fase usa solo la copia manual para mostrar datos; no habilita escrituras. Hay que revisar la sincronización antes de elegir una fuente compartida.", "warning");
+      setStatus("La copia manual existe, pero hay diferencias de cantidad en una o más tablas. La cantidad difiere entre la copia manual y los registros sincronizados. La vista prioriza los registros individuales cuando existen; revisá la auditoría antes de realizar cambios.", "warning");
     } else {
-      setStatus("La copia manual y los registros individuales tienen la misma cantidad por tabla. Esto es una comprobación inicial; todavía falta comparar el contenido y las relaciones antes de habilitar escrituras.", "");
+      setStatus("La copia manual y los registros individuales tienen la misma cantidad por tabla. Los cambios web se guardan como registros versionados compatibles con la sincronización de Android.", "");
     }
   }
 }
@@ -143,7 +144,7 @@ function renderIngredients() {
   $("ingredients-body").innerHTML = filtered.length ? filtered.map(r => `
     <tr><td><strong>${escapeHtml(r.name || "Sin nombre")}</strong>${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ""}</td>
     <td>${escapeHtml(formatNumber(r.qty))} ${escapeHtml(r.unit || "")}</td>
-    <td>${escapeHtml(formatMoney(r.price))}</td><td>${escapeHtml(dateText(r.updated))}</td></tr>`).join("") : emptyRow(4, "No hay insumos que coincidan con la búsqueda.");
+    <td>${escapeHtml(formatMoney(r.price))}</td><td>${escapeHtml(dateText(r.updated))}</td><td><button class="small secondary" data-edit="ingredient" data-sync-id="${escapeHtml(r.sync_id || "")}">Editar</button></td></tr>`).join("") : emptyRow(5, "No hay insumos que coincidan con la búsqueda.");
 }
 function renderRecipes() {
   const rows = tablesForDisplay()?.recipes;
@@ -156,7 +157,7 @@ function renderRecipes() {
   $("recipes-body").innerHTML = filtered.length ? filtered.map(r => `
     <tr><td><strong>${escapeHtml(r.name || "Sin nombre")}</strong>${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ""}</td>
     <td>${escapeHtml(formatNumber(r.yield_qty))} ${escapeHtml(r.yield_unit || "")}</td>
-    <td>${escapeHtml(formatMoney(r.sale_price))}</td><td>${escapeHtml(dateText(r.updated))}</td></tr>`).join("") : emptyRow(4, "No hay recetas que coincidan con la búsqueda.");
+    <td>${escapeHtml(formatMoney(r.sale_price))}</td><td>${escapeHtml(dateText(r.updated))}</td><td><button class="small secondary" data-edit="recipe" data-sync-id="${escapeHtml(r.sync_id || "")}">Editar</button></td></tr>`).join("") : emptyRow(5, "No hay recetas que coincidan con la búsqueda.");
 }
 async function loadData() {
   if (!auth.currentUser) return;
@@ -221,6 +222,7 @@ if (firebaseConfig.apiKey.startsWith("REEMPLAZAR") || firebaseConfig.appId.start
       $("login-panel").hidden = !!user;
       $("app-panel").hidden = !user;
       if (user) {
+        initWebEditor();
         $("account-label").textContent = "Sesión iniciada: " + user.email;
         await loadData();
       } else {
