@@ -251,16 +251,11 @@ class NumericThousandsFormatter extends TextInputFormatter {
       final rawFraction=pieces.skip(1).join('').replaceAll(RegExp(r'[^0-9]'), '');
       fraction=rawFraction.substring(0,rawFraction.length.clamp(0,2).toInt());
       hasDecimal=true;
-    } else if(RegExp(r'^\d{1,3}(\.\d{3})+\d*$').hasMatch(original)) {
-      integerPart=original.replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
-    } else if(original.contains('.')) {
-      final index=original.lastIndexOf('.');
-      integerPart=original.substring(0,index).replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
-      final rawFraction=original.substring(index+1).replaceAll(RegExp(r'[^0-9]'), '');
-      fraction=rawFraction.substring(0,rawFraction.length.clamp(0,2).toInt());
-      hasDecimal=true;
     } else {
-      integerPart=original.replaceAll(RegExp(r'[^0-9]'), '');
+      // En formato argentino el punto siempre agrupa miles; la coma separa decimales.
+      // No interpretar un punto de agrupación incompleto como separador decimal
+      // mientras el usuario está borrando o editando dígitos.
+      integerPart=original.replaceAll('.', '').replaceAll(RegExp(r'[^0-9]'), '');
     }
     if(integerPart.isEmpty)integerPart='0';
     final grouped=StringBuffer();
