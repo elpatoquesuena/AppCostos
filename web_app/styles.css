@@ -5,3 +5,5 @@
 @media(max-width:600px){.editor-fields{grid-template-columns:1fr}.section-heading button{width:100%}}
 
 .notice.info{border-color:#cddff2;background:#eff6ff;color:#24486e}.info-state{color:#315f91;font-weight:650}
+
+.audit-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.audit-actions button{white-space:nowrap}@media(max-width:760px){.audit-actions{width:100%}.audit-actions button{flex:1}}
