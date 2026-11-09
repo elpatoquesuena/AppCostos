@@ -105,10 +105,10 @@ function renderAudit() {
     const recordsCount = active.get(table).size;
     let state = "Sin copia manual";
     if (snapCount !== null) {
-      state = snapCount === recordsCount ? "Misma cantidad" : "Revisar diferencia";
+      state = snapCount === recordsCount ? "Misma cantidad" : "Copia manual desactualizada";
       if (snapCount === 0 && recordsCount === 0) state = "Vacío en ambas";
     }
-    const stateClass = state === "Misma cantidad" || state === "Vacío en ambas" ? "muted" : "";
+    const stateClass = state === "Misma cantidad" || state === "Vacío en ambas" ? "muted" : (state === "Copia manual desactualizada" ? "info-state" : "");
     html += `<tr><td>${escapeHtml(LABELS[table])}</td><td>${snapCount === null ? "—" : snapCount}</td><td>${recordsCount}</td><td class="${stateClass}">${escapeHtml(state)}</td></tr>`;
   }
   html += "</tbody></table>";
@@ -128,7 +128,7 @@ function renderAudit() {
       return expected !== null && expected !== active.get(t).size;
     });
     if (mismatches.length) {
-      setStatus("La copia manual existe, pero hay diferencias de cantidad en una o más tablas. La cantidad difiere entre la copia manual y los registros sincronizados. La vista prioriza los registros individuales cuando existen; revisá la auditoría antes de realizar cambios.", "warning");
+      setStatus("La copia manual es una referencia histórica y no se actualiza con cada cambio. En las tablas que tienen registros individuales, esos documentos son la fuente vigente que utiliza la web y Android. Las diferencias de cantidad con la copia manual son informativas y no indican por sí solas pérdida de datos.", "info");
     } else {
       setStatus("La copia manual y los registros individuales tienen la misma cantidad por tabla. Los cambios web se guardan como registros versionados compatibles con la sincronización de Android.", "");
     }
