@@ -11,8 +11,8 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand-mark">AC</div>
-      <div><h1>AppCostos</h1><p>Panel web · fase de lectura segura</p></div>
-      <span class="readonly-pill">SOLO LECTURA</span>
+      <div><h1>AppCostos</h1><p>Panel web · sincronización con Android</p></div>
+      <span class="readonly-pill">EDICIÓN CONTROLADA</span>
     </header>
 
     <section id="login-panel" class="panel login-panel">
@@ -44,14 +44,15 @@
         <div id="audit-table-wrap" class="table-wrap"></div>
       </section>
       <section class="panel">
-        <div class="section-heading"><div><h3>Insumos</h3><p>Lectura de la copia manual. No se puede editar desde esta versión.</p></div><input id="ingredient-filter" class="filter" type="search" placeholder="Buscar insumo…"></div>
-        <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Presentación</th><th>Precio de presentación</th><th>Última actualización</th></tr></thead><tbody id="ingredients-body"></tbody></table></div>
+        <div class="section-heading"><div><h3>Insumos</h3><p>Crear y editar insumos. Los cambios de precio generan historial automáticamente.</p></div><button id="new-ingredient-button">Nuevo insumo</button><input id="ingredient-filter" class="filter" type="search" placeholder="Buscar insumo…"></div>
+        <div class="table-wrap"><table><thead><tr><th>Insumo</th><th>Presentación</th><th>Precio de presentación</th><th>Última actualización</th><th>Acciones</th></tr></thead><tbody id="ingredients-body"></tbody></table></div>
       </section>
       <section class="panel">
-        <div class="section-heading"><div><h3>Recetas</h3><p>Lectura de la copia manual.</p></div><input id="recipe-filter" class="filter" type="search" placeholder="Buscar receta…"></div>
-        <div class="table-wrap"><table><thead><tr><th>Receta</th><th>Rendimiento</th><th>Precio de venta</th><th>Última actualización</th></tr></thead><tbody id="recipes-body"></tbody></table></div>
+        <div class="section-heading"><div><h3>Recetas</h3><p>Crear y editar datos generales y precio de venta.</p></div><button id="new-recipe-button">Nueva receta</button><input id="recipe-filter" class="filter" type="search" placeholder="Buscar receta…"></div>
+        <div class="table-wrap"><table><thead><tr><th>Receta</th><th>Rendimiento</th><th>Precio de venta</th><th>Última actualización</th><th>Acciones</th></tr></thead><tbody id="recipes-body"></tbody></table></div>
       </section>
-      <p class="footnote">Esta versión no modifica Firestore. La sincronización automática entre dispositivos todavía debe validarse antes de habilitar la edición web.</p>
+      <p class="footnote">Los cambios se guardan como documentos versionados en users/{uid}/records, respetando el esquema de sincronización de Android. En esta primera etapa se habilitan insumos, recetas y sus historiales automáticos de precios. Las relaciones de ingredientes dentro de recetas, la edición directa de historiales y los parámetros permanecen en modo lectura mientras se valida esta etapa.</p>
+      <dialog id="editor-dialog" class="editor-dialog"><form id="editor-form"><h3 id="editor-title">Editar</h3><div id="editor-fields" class="editor-fields"></div><p id="editor-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" id="editor-cancel" class="secondary">Cancelar</button><button type="submit">Guardar cambios</button></div></form></dialog>
     </section>
     <p id="global-error" class="error" role="alert"></p>
   </main>
