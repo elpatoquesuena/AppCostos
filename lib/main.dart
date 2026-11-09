@@ -198,7 +198,18 @@ String fmt(num n) {
   for(var i=0;i<w.length;i++){if(i>0&&(w.length-i)%3==0)b.write('.');b.write(w[i]);}
   return p.length>1?'${b.toString()},${p[1]}':b.toString();
 }
-String cash(num n) => '\$' + fmt(n);
+String cash(num n) {
+  final fixed=n.toStringAsFixed(2);
+  final parts=fixed.split('.');
+  final integer=parts[0];
+  final grouped=StringBuffer();
+  for(var i=0;i<integer.length;i++) {
+    if(i>0&&(integer.length-i)%3==0)grouped.write('.');
+    grouped.write(integer[i]);
+  }
+  return '\$ ${grouped.toString()},${parts[1]}';
+}
+String rawEditNumber(num n) => n % 1 == 0 ? n.toStringAsFixed(0) : n.toString();
 
 double baseUnitPrice(num presentationPrice, num presentationQty, String rawUnit) {
   final qty=presentationQty.toDouble();
@@ -521,7 +532,7 @@ Future<void> editDialog(BuildContext context,String title,List<FormFieldSpec> fi
     }
     return TextFormField(controller:controllers[f.key],readOnly:f.readOnly,
       keyboardType:f.numeric?const TextInputType.numberWithOptions(decimal:true):TextInputType.text,
-      inputFormatters:f.numeric?[NumericThousandsFormatter()]:null,
+      inputFormatters:f.numeric&&!f.plainNumeric?[NumericThousandsFormatter()]:null,
       decoration:InputDecoration(labelText:f.label),
       validator:f.required?(v)=>(v==null||v.trim().isEmpty)?'Campo obligatorio':(f.numeric&&number(v)<=0&&f.key!='minutes'?'Ingresá un valor mayor que cero':null):null);
   }
@@ -569,9 +580,9 @@ Future<void> editDialog(BuildContext context,String title,List<FormFieldSpec> fi
 
 class FormFieldSpec {
   final String key,label,initial;
-  final bool numeric,required,readOnly;
+  final bool numeric,required,readOnly,plainNumeric;
   final List<String>? options;
-  const FormFieldSpec(this.key,this.label,{this.initial='',this.numeric=false,this.required=true,this.readOnly=false,this.options});
+  const FormFieldSpec(this.key,this.label,{this.initial='',this.numeric=false,this.required=true,this.readOnly=false,this.plainNumeric=false,this.options});
 }
 
 class IngredientsPage extends StatefulWidget {
@@ -603,7 +614,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
       FormFieldSpec('description','Descripción',initial:item['description'] as String,required:false),
       FormFieldSpec('qty','Cantidad de la presentación',initial:fmt(item['qty'] as num),numeric:true),
       FormFieldSpec('unit','Unidad',initial:item['unit'] as String,options:['g','kg','l','ml','cc','unidad']),
-      FormFieldSpec('price','Precio actual',initial:fmt(item['price'] as num),numeric:true),
+      FormFieldSpec('price','Precio actual',initial:rawEditNumber(item['price'] as num),numeric:true,plainNumeric:true),
     ],(v)async{
       final normalized=titleCase(v['name']??'');
       final dup=await Store.instance.db.query('ingredients',where:'LOWER(name)=? AND id<>?',whereArgs:[normalized.toLowerCase(),item['id']],limit:1);
@@ -635,7 +646,7 @@ class _IngredientsPageState extends State<IngredientsPage> {
     });
   }
   Future<void> priceUpdate(Map<String,Object?> item) async {
-    await editDialog(context,'Actualizar precio',const [FormFieldSpec('price','Nuevo precio',numeric:true)],(v)async{
+    await editDialog(context,'Actualizar precio',const [FormFieldSpec('price','Nuevo precio',numeric:true,plainNumeric:true)],(v)async{
       final price=number(v['price']);final now=stamp();
       await Store.instance.db.update('ingredients',{'price':price,'updated':now},where:'id=?',whereArgs:[item['id']]);
       await Store.instance.db.insert('ingredient_prices',{'ingredient_id':item['id'],'price':baseUnitPrice(price,item['qty'] as num,item['unit'] as String),'date':now});
@@ -940,7 +951,7 @@ class _RecipesPageState extends State<RecipesPage> {
         FormFieldSpec('sale_qty','Presentación de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
         FormFieldSpec('sale_unit','Unidad',initial:r['sale_unit'] as String,options:['g','kg','ml','l','cc','unidad']),
         FormFieldSpec('portions_per_presentation','Porciones por presentación',initial:fmt((r['portions_per_presentation'] as num?)??1),numeric:true),
-        FormFieldSpec('sale_price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
+        FormFieldSpec('sale_price','Precio de venta',initial:rawEditNumber(r['sale_price'] as num),numeric:true,plainNumeric:true),
       ],
       (v) async {
         final name=titleCase(v['name']??'');
@@ -987,7 +998,7 @@ class _RecipesPageState extends State<RecipesPage> {
     await editDialog(context,'Precio y presentación',[
       FormFieldSpec('qty','Cantidad de venta',initial:fmt(r['sale_qty'] as num),numeric:true),
       FormFieldSpec('unit','Unidad de venta',initial:r['sale_unit'] as String),
-      FormFieldSpec('price','Precio de venta',initial:fmt(r['sale_price'] as num),numeric:true),
+      FormFieldSpec('price','Precio de venta',initial:rawEditNumber(r['sale_price'] as num),numeric:true,plainNumeric:true),
     ],(v)async{await Store.instance.db.update('recipes',{'sale_qty':number(v['qty']),'sale_unit':v['unit'],'sale_price':number(v['price']),'sale_updated':stamp()},where:'id=?',whereArgs:[r['id']]);if(mounted)setState((){});widget.onChange();});
   }
   Future<void> reopenRecipe(Map<String,Object?> r) async {
