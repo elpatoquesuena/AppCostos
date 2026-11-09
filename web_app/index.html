@@ -35,12 +35,12 @@
       </div>
       <div id="status-message" class="notice">Consultando datos de Firebase…</div>
       <div class="stats-grid">
-        <article class="stat-card"><span>Insumos en copia manual</span><strong id="count-ingredients">—</strong></article>
-        <article class="stat-card"><span>Recetas en copia manual</span><strong id="count-recipes">—</strong></article>
+        <article class="stat-card"><span>Insumos visibles</span><strong id="count-ingredients">—</strong></article>
+        <article class="stat-card"><span>Recetas visibles</span><strong id="count-recipes">—</strong></article>
         <article class="stat-card"><span>Registros individuales</span><strong id="count-records">—</strong></article>
       </div>
       <section class="panel">
-        <div class="section-heading"><div><h3>Auditoría de Firestore</h3><p>Compara la copia manual conocida con los registros individuales de sincronización.</p></div><button id="refresh-button" class="secondary">Actualizar</button></div>
+        <div class="section-heading"><div><h3>Auditoría de Firestore</h3><p>Compara la referencia histórica de la copia manual con los registros individuales vigentes. Las diferencias no implican por sí solas pérdida de datos.</p></div><button id="refresh-button" class="secondary">Actualizar</button></div>
         <div id="audit-table-wrap" class="table-wrap"></div>
       </section>
       <section class="panel">
