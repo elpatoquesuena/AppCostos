@@ -45,6 +45,12 @@ function dateText(value) {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? String(value) : new Intl.DateTimeFormat("es-AR").format(d);
 }
+function dateTimeText(value) {
+  if (!value) return "—";
+  const raw = typeof value.toDate === "function" ? value.toDate() : value;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? "—" : new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(d);
+}
 function emptyRow(cols, message) {
   return `<tr><td class="empty" colspan="${cols}">${escapeHtml(message)}</td></tr>`;
 }
@@ -184,6 +190,7 @@ function renderAudit() {
   }
   html += "</tbody></table>";
   $("audit-table-wrap").innerHTML = html;
+  $("backup-updated-label").textContent = "Última copia manual: " + dateTimeText(currentSnapshot?.updatedAt);
   const recordsCount = currentRecords.filter(x => x.data.deleted !== true).length;
   $("count-records").textContent = formatNumber(recordsCount);
   const displayTables = tablesForDisplay();
